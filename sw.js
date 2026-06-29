@@ -1,4 +1,4 @@
-const CACHE = 'bankroll-v1';
+const CACHE = 'bankroll-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -25,6 +25,10 @@ self.addEventListener('activate', e => {
 // cache-first : l'app marche 100% hors-ligne une fois installée
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+
+  // On laisse passer les requêtes non-HTTP (extension, chrome-extension, etc.)
+  if (!e.request.url.startsWith('http')) return;
+
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
       const copy = res.clone();
