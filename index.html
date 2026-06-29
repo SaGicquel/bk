@@ -132,6 +132,34 @@ table.an td:first-child{font-family:var(--sans)}
   padding:8px 0;margin:0;border-bottom:1px solid var(--border)}
 .sel-list input{width:auto}
 .add-sel{border:1px dashed var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
+.scan-drop{border:2px dashed var(--border);border-radius:16px;padding:36px 16px;text-align:center;cursor:pointer;
+  transition:border-color .25s,background .25s}
+.scan-drop.over{border-color:var(--accent);background:rgba(255,176,32,.08)}
+.scan-drop svg{width:44px;height:44px;stroke:var(--muted);display:block;margin:0 auto 10px}
+.scan-drop .lbl{font-size:15px;color:var(--text);font-weight:500}
+.scan-drop .sub{font-size:11px;color:var(--muted);margin-top:4px}
+.scan-thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.scan-thumbs .thumb{width:60px;height:60px;border-radius:10px;object-fit:cover;border:1px solid var(--border)}
+.scan-thumbs .thumb-wrap{position:relative}
+.scan-thumbs .thumb-rm{position:absolute;top:-5px;right:-5px;width:20px;height:20px;border-radius:50%;
+  background:var(--neg);color:#fff;border:none;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.scan-progress{margin-top:16px}
+.scan-progress .pbar{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden}
+.scan-progress .pfill{height:100%;background:linear-gradient(90deg,var(--accent),var(--pos));border-radius:3px;transition:width .3s}
+.scan-progress .ptxt{font-size:12px;color:var(--muted);margin-top:6px;text-align:center}
+@keyframes scan-pulse{0%,100%{opacity:.5}50%{opacity:1}}
+.scan-loading{animation:scan-pulse 1.4s ease-in-out infinite;text-align:center;padding:18px;color:var(--accent);font-size:14px;font-weight:600}
+.scan-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:8px}
+.scan-card .sc-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.scan-card .sc-head input[type="checkbox"]{width:auto;accent-color:var(--accent)}
+.scan-card .sc-match{font-weight:600;font-size:14px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scan-card .sc-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
+.scan-card .sc-fields label{margin:0;font-size:10px}
+.scan-card .sc-fields input,.scan-card .sc-fields select{padding:8px 9px;font-size:13px;border-radius:8px}
+.scan-raw{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px;margin-top:10px;
+  font-size:11px;color:var(--muted);max-height:120px;overflow-y:auto;white-space:pre-wrap;font-family:var(--mono);line-height:1.4}
+.scan-count{font-size:13px;color:var(--muted);margin-bottom:12px}
+.scan-btn{display:inline-flex;align-items:center;gap:5px}
 </style>
 </head>
 <body>
@@ -217,6 +245,7 @@ table.an td:first-child{font-family:var(--sans)}
 <div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modalContent"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>
 /* ===================== STORE ===================== */
 const KEY='bankroll_db_v2';
@@ -382,6 +411,7 @@ function renderBets(){
     <button class="${filters.status==='lost'?'active':''}" onclick="setFilter('status','lost')">Perdus</button>
     <button class="${filters.status==='pending'?'active':''}" onclick="setFilter('status','pending')">En cours</button>
     <button onclick="openFilterModal()">Filtres ⚙</button>
+    <button onclick="openScanModal()" class="scan-btn">📷 Scan</button>
     <button class="${selectMode?'active':''}" onclick="toggleSelectMode()">${selectMode?'Annuler':'Sélection'}</button>`;
   let bets=[...activeBets()];
   if(filters.status)bets=bets.filter(b=>filters.status==='pending'?!isSettled(b):(filters.status==='won'?isWin(b)&&isSettled(b):(filters.status==='lost'?!isWin(b)&&isSettled(b):true)));
@@ -978,6 +1008,250 @@ function cssesc(s){return String(s).replace(/"/g,'\\"');}
 function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
+
+/* ===================== SCAN SCREENSHOTS (OCR) ===================== */
+let scanFiles=[],scanParsed=[],scanRawTexts=[];
+
+function openScanModal(){
+  scanFiles=[];scanParsed=[];scanRawTexts=[];
+  document.getElementById('modalContent').innerHTML=`
+    <h3>📷 Scanner des paris</h3>
+    <div class="scan-drop" id="scanDrop" onclick="document.getElementById('scanInput').click()">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <div class="lbl">Glissez vos captures ici</div>
+      <div class="sub">ou touchez pour sélectionner · JPG, PNG · max 10 images</div>
+    </div>
+    <input type="file" id="scanInput" accept="image/*" multiple style="display:none" onchange="handleScanFiles(this.files)">
+    <div id="scanThumbs" class="scan-thumbs"></div>
+    <div id="scanActions"></div>
+    <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Annuler</button>`;
+  const drop=document.getElementById('scanDrop');
+  drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
+  drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');handleScanFiles(e.dataTransfer.files);});
+  openModal();
+}
+
+function handleScanFiles(fileList){
+  const files=[...fileList].filter(f=>f.type.startsWith('image/')).slice(0,10);
+  if(!files.length){toast('Aucune image détectée');return;}
+  scanFiles=files;
+  const el=document.getElementById('scanThumbs');el.innerHTML='';
+  files.forEach((f,i)=>{
+    const wrap=document.createElement('div');wrap.className='thumb-wrap';
+    const img=document.createElement('img');img.className='thumb';img.src=URL.createObjectURL(f);
+    const rm=document.createElement('button');rm.className='thumb-rm';rm.textContent='✕';
+    rm.onclick=e=>{e.stopPropagation();scanFiles.splice(i,1);handleScanFiles(scanFiles);};
+    wrap.appendChild(img);wrap.appendChild(rm);el.appendChild(wrap);
+  });
+  document.getElementById('scanActions').innerHTML=`
+    <button class="btn primary" style="margin-top:14px" onclick="runOCR()">Analyser ${files.length} image${files.length>1?'s':''}</button>`;
+}
+
+async function runOCR(){
+  if(!scanFiles.length)return;
+  if(typeof Tesseract==='undefined'){toast('Tesseract.js non chargé — vérifiez votre connexion');return;}
+  document.getElementById('scanActions').innerHTML=`
+    <div class="scan-progress">
+      <div class="scan-loading">⏳ Chargement du moteur OCR…</div>
+      <div class="pbar"><div class="pfill" id="scanFill" style="width:0%"></div></div>
+      <div class="ptxt" id="scanPtxt">Téléchargement des données de langue…</div>
+    </div>`;
+  const allBets=[],total=scanFiles.length;scanRawTexts=[];
+  try{
+    const worker=await Tesseract.createWorker('fra',1,{
+      logger:m=>{
+        const fill=document.getElementById('scanFill'),ptxt=document.getElementById('scanPtxt');
+        if(m.status==='recognizing text'){
+          const pct=Math.round(m.progress*100);
+          if(fill)fill.style.width=pct+'%';
+          if(ptxt)ptxt.textContent='Lecture du texte… '+pct+'%';
+        }else if(m.status){
+          if(ptxt)ptxt.textContent=m.status==='loading language traineddata'?'Téléchargement langue OCR…':m.status;
+        }
+      }
+    });
+    const lbl=document.querySelector('.scan-loading');
+    for(let i=0;i<total;i++){
+      if(lbl)lbl.textContent=`📄 Analyse image ${i+1}/${total}…`;
+      const fill=document.getElementById('scanFill');
+      if(fill)fill.style.width='0%';
+      const {data}=await worker.recognize(scanFiles[i]);
+      scanRawTexts.push(data.text);
+      const bets=parseBetsFromText(data.text);
+      allBets.push(...bets);
+    }
+    await worker.terminate();
+  }catch(err){
+    toast('Erreur OCR : '+err.message);
+    document.getElementById('scanActions').innerHTML=`
+      <div class="scan-empty">Erreur lors de l'analyse.<br><span class="muted">${esc(err.message)}</span></div>
+      <button class="btn" style="margin-top:10px" onclick="runOCR()">Réessayer</button>`;
+    return;
+  }
+  scanParsed=allBets;
+  if(!allBets.length){
+    document.getElementById('modalContent').innerHTML=`<h3>📷 Résultat du scan</h3>
+      <div class="scan-empty">Aucun pari détecté dans les images.<br>
+        <span class="muted">Essayez avec des captures plus nettes ou un autre angle.</span></div>
+      ${scanRawTexts.length?'<details style="margin-top:10px"><summary class="muted" style="font-size:12px;cursor:pointer">Voir le texte brut détecté</summary><div class="scan-raw">'+esc(scanRawTexts.join('\n---\n'))+'</div></details>':''}
+      <button class="btn" style="margin-top:12px" onclick="openScanModal()">Réessayer</button>
+      <button class="btn ghost" style="margin-top:8px" onclick="closeModal()">Fermer</button>`;
+    return;
+  }
+  showScanPreview();
+}
+
+function parseBetsFromText(raw){
+  const text=raw.replace(/\r/g,'');
+  const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
+  if(!lines.length)return[];
+  const lower=text.toLowerCase();
+  let bookmaker='';
+  for(const[k,v]of[['winamax','Winamax'],['betclic','Betclic'],['unibet','Unibet'],['pmu','PMU'],
+    ['parions','Parions Sport'],['zebet','ZEbet'],['bet365','Bet365'],['1xbet','1xBet'],
+    ['bwin','Bwin'],['pinnacle','Pinnacle'],['netbet','NetBet'],['pokerstars','PokerStars'],
+    ['feelingbet','FeelingBet'],['vbet','VBet'],['cote',''],['stake','']]) {
+    if(k&&v&&lower.includes(k)){bookmaker=v;break;}}
+  const sportKeys=[['football','Football'],['foot ','Football'],['tennis','Tennis'],['basket','Basketball'],
+    ['nba','Basketball'],['rugby','Rugby'],['handball','Handball'],['hockey','Hockey'],['baseball','Baseball'],
+    ['mma','MMA'],['ufc','MMA'],['boxe','Boxe'],['esport','Esport'],['volley','Volleyball'],
+    ['formule','Formule 1'],['f1 ','Formule 1'],['cyclisme','Cyclisme'],['golf','Golf'],['cricket','Cricket']];
+  const compKeys=[['ligue 1','Ligue 1'],['ligue 2','Ligue 2'],['premier league','Premier League'],
+    ['la liga','La Liga'],['serie a','Serie A'],['bundesliga','Bundesliga'],['champions league','Champions League'],
+    ['ligue des champions','Champions League'],['europa league','Europa League'],['conference league','Conference League'],
+    ['euro 20','Euro'],['coupe du monde','Coupe du monde'],['roland garros','Roland Garros'],
+    ['wimbledon','Wimbledon'],['us open','US Open'],['nba','NBA'],['nfl','NFL'],['nhl','NHL'],['top 14','Top 14']];
+  const bets=[];
+  let cur=null;
+  const today=new Date().toISOString().slice(0,10);
+  function flush(){
+    if(cur&&(cur.odds>0||cur.stake>0||cur.match)){
+      const ctx=(cur.match+' '+(cur._ctx||[]). join(' ')).toLowerCase();
+      if(!cur.sport)for(const[k,v]of sportKeys){if(ctx.includes(k)){cur.sport=v;break;}}
+      if(!cur.competition)for(const[k,v]of compKeys){if(ctx.includes(k)||lower.includes(k)){cur.competition=v;break;}}
+      delete cur._ctx;delete cur._gotStatus;
+      bets.push(cur);
+    }
+  }
+  function fresh(){return{match:'',selection:'',odds:0,stake:0,status:'pending',date:today,
+    sport:'',competition:'',bookmaker,betType:'single',note:'',_ctx:[],_gotStatus:false};}
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i],ll=line.toLowerCase();
+    // Standalone status = new bet block
+    const solo=/^(gagn[ée]e?s?|perdue?s?|en\s*cours|rembours[ée]e?|annul[ée]e?|won|lost|pending|void|remboursement)$/i.test(line.trim());
+    if(solo){
+      flush();cur=fresh();
+      if(/gagn/i.test(ll))cur.status='won';
+      else if(/perd/i.test(ll))cur.status='lost';
+      else if(/cours/i.test(ll))cur.status='pending';
+      else cur.status='void';
+      cur._gotStatus=true;cur._ctx.push(line);continue;
+    }
+    if(!cur)cur=fresh();
+    cur._ctx.push(line);
+    // Inline status
+    if(!cur._gotStatus){
+      if(/\bgagn[ée]/i.test(ll)){cur.status='won';cur._gotStatus=true;}
+      else if(/\bperdu/i.test(ll)){cur.status='lost';cur._gotStatus=true;}
+      else if(/\ben\s*cours/i.test(ll)){cur.status='pending';cur._gotStatus=true;}
+      else if(/\b(rembours|annul)/i.test(ll)){cur.status='void';cur._gotStatus=true;}
+    }
+    // Odds: @2.15, Cote 2.15, Cote: 2,15
+    const om=line.match(/(?:@|cote\s*:?\s*)(\d+[.,]\d{1,2})/i);
+    if(om&&!cur.odds)cur.odds=parseFloat(om[1].replace(',','.'));
+    // Stake: Mise 10,00€, Mise: 10€, Enjeu 5,00 €
+    const sm=line.match(/(?:mise|enjeu|stake)\s*:?\s*(\d+[.,]?\d*)\s*€?/i);
+    if(sm&&!cur.stake)cur.stake=parseFloat(sm[1].replace(',','.'));
+    // Gains (detect but don't use as stake)
+    const gm=/(?:gain|retour|pot)/i.test(ll);
+    // Standalone €-amount that's NOT gains → might be stake
+    if(!sm&&!cur.stake&&!gm){
+      const em=line.match(/^(\d+[.,]?\d*)\s*€$/);
+      if(em)cur.stake=parseFloat(em[1].replace(',','.'));
+    }
+    // Date: 01/06/2025, 01-06-25
+    const dm=line.match(/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/);
+    if(dm){
+      let y=dm[3];if(y.length===2)y='20'+y;
+      cur.date=y+'-'+dm[2].padStart(2,'0')+'-'+dm[1].padStart(2,'0');
+    }
+    // Match: Team A - Team B (but not lines with € or Cote)
+    if(!cur.match&&line.length>4&&line.length<80){
+      const mm=line.match(/^(.{2,35}?)\s+[-–—vs\.]+\s+(.{2,35}?)$/);
+      if(mm&&!/€|cote|mise|gain|total|retour|profit|simple|combin/i.test(line))cur.match=line.trim();
+    }
+    // "Simple" / "Combiné" after we already have data → new bet
+    if(/^(simple|combin[ée]|pari simple|pari combin)$/i.test(ll.trim())&&(cur.odds||cur.stake)){
+      flush();cur=fresh();cur._ctx.push(line);
+      if(/combin/i.test(ll))cur.betType='combo';
+    }
+  }
+  flush();
+  return bets;
+}
+
+function showScanPreview(){
+  const bets=scanParsed;
+  const sts=[['won','Gagné'],['lost','Perdu'],['pending','En cours'],['void','Annulé/Remb.']];
+  let h=`<h3>📋 Résultat du scan</h3>
+    <div class="scan-count">${bets.length} pari${bets.length>1?'s':''} détecté${bets.length>1?'s':''} — vérifiez avant d'importer</div>`;
+  bets.forEach((b,i)=>{
+    const badge=b.status==='won'?'b-won':b.status==='lost'?'b-lost':b.status==='void'?'b-void':'b-pending';
+    const label={won:'Gagné',lost:'Perdu',pending:'En cours',void:'Annulé'}[b.status]||'?';
+    h+=`<div class="scan-card" id="sc_${i}">
+      <div class="sc-head">
+        <input type="checkbox" checked data-sci="${i}">
+        <span class="sc-match">${esc(b.match||b.selection||'Pari '+(i+1))}</span>
+        <span class="badge ${badge}">${label}</span>
+      </div>
+      <div class="sc-fields">
+        <div><label>Match / Sélection</label><input data-sc="${i}" data-f="match" value="${esc(b.match||b.selection)}"></div>
+        <div><label>Statut</label><select data-sc="${i}" data-f="status">${sts.map(([v,l])=>`<option value="${v}" ${b.status===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div><label>Cote</label><input class="num" data-sc="${i}" data-f="odds" type="number" step="0.01" value="${b.odds||''}"></div>
+        <div><label>Mise (${cur()})</label><input class="num" data-sc="${i}" data-f="stake" type="number" step="0.01" value="${b.stake||''}"></div>
+        <div><label>Date</label><input data-sc="${i}" data-f="date" type="date" value="${b.date}"></div>
+        <div><label>Sport</label><input data-sc="${i}" data-f="sport" value="${esc(b.sport)}"></div>
+        <div><label>Compétition</label><input data-sc="${i}" data-f="competition" value="${esc(b.competition)}"></div>
+        <div><label>Bookmaker</label><input data-sc="${i}" data-f="bookmaker" value="${esc(b.bookmaker)}"></div>
+      </div>
+    </div>`;
+  });
+  if(scanRawTexts.length){
+    h+='<details style="margin-top:6px"><summary class="muted" style="font-size:12px;cursor:pointer">Voir le texte brut OCR</summary><div class="scan-raw">'+esc(scanRawTexts.join('\n--- image suivante ---\n'))+'</div></details>';
+  }
+  h+=`<div class="btn-row" style="margin-top:14px"><button class="btn primary" onclick="importScannedBets()">Importer les paris sélectionnés</button></div>
+    <button class="btn ghost" style="margin-top:8px" onclick="openScanModal()">Rescanner</button>
+    <button class="btn ghost" style="margin-top:8px" onclick="closeModal()">Annuler</button>`;
+  document.getElementById('modalContent').innerHTML=h;
+}
+
+function importScannedBets(){
+  const cards=document.querySelectorAll('.scan-card');
+  let added=0;
+  cards.forEach((card,i)=>{
+    const ck=card.querySelector('[data-sci="'+i+'"]');
+    if(!ck||!ck.checked)return;
+    const g=f=>{const el=card.querySelector('[data-sc="'+i+'"][data-f="'+f+'"]');return el?el.value:'';};
+    const stake=parseFloat(g('stake'))||0;
+    const odds=parseFloat(g('odds'))||0;
+    if(!stake&&!odds)return;
+    DB.bets.push({
+      id:uid(),bankrollId:DB.activeId,createdAt:Date.now(),
+      betType:'single',stake:stake||0,odds:odds||1,
+      status:g('status')||'pending',
+      placedAt:g('date')||new Date().toISOString().slice(0,10),
+      sport:g('sport'),competition:g('competition'),bookmaker:g('bookmaker'),
+      category:'',tipster:'',note:'Import scan',
+      isFreebet:false,isLive:false,closingOdds:null,customFields:{}
+    });
+    added++;
+  });
+  if(!added){toast('Aucun pari à importer');return;}
+  save();renderAll();closeModal();
+  toast(added+' pari'+(added>1?'s':'')+' importé'+(added>1?'s':''));
+}
 
 renderAll();
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
