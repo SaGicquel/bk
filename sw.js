@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bk-cache-v2';
+const CACHE_NAME = 'bk-cache-v3';
 const APP_SCOPE = '/bk/';
 const APP_SHELL = [
   '/bk/',
@@ -14,6 +14,11 @@ self.addEventListener('install', event => {
     caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL))
   );
   self.skipWaiting();
+});
+
+// La page peut demander au nouveau SW de prendre la main immédiatement
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
