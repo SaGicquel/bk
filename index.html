@@ -301,6 +301,13 @@ function betProfit(b){
     case 'half_won':return s/2*(o-1);case 'half_lost':return -s/2;
     case 'cashout':return(+b.cashoutAmount||0)-s;default:return 0;}
 }
+// Gain TOTAL encaissé (retour brut = bénéfice net + mise remboursée). Ex: 10€ @1.80 => 18€
+function betReturn(b){
+  if(!isSettled(b))return 0;
+  // Un freebet ne rembourse pas la mise : on n'ajoute que le bénéfice
+  if(b.isFreebet&&['won','half_won'].includes(b.status))return betProfit(b);
+  return betProfit(b)+betStake(b);
+}
 function betStake(b){
   if(b.betType==='system')return +b.stake*systemCombos(b).length;
   if(b.isEachWay)return 2*+b.stake;return +b.stake;}
@@ -383,7 +390,7 @@ function betRow(b){
       <span class="badge ${cls}">${lbl}</span>${typeBadge}
       ${b.isFreebet?'<span class="badge b-pending">FB</span>':''}${b.isLive?'<span class="badge b-void">LIVE</span>':''}</div>
       <div class="meta">${esc(meta)||'—'}</div></div>
-    <div class="right"><div class="profit num ${settled?(p>=0?'pos':'neg'):'muted'}">${settled?signed(p):fmt(betStake(b),0)+cur()}</div>
+    <div class="right"><div class="profit num ${settled?(p>=0?'pos':'neg'):'muted'}">${settled?(p>0?signed(betReturn(b)):signed(p)):fmt(betStake(b),0)+cur()}</div>
       <div class="meta num">mise ${fmt(betStake(b),0)}${cur()}</div></div></div>`;
 }
 function svgChart(pts){
