@@ -215,6 +215,20 @@ table.an td:first-child{font-family:var(--sans)}
       <h2 class="section">Champs personnalisés</h2>
       <div id="customFieldList"></div>
       <button class="btn" onclick="addCustomField()">+ Ajouter un champ</button>
+      <h2 class="section">Synchronisation cloud</h2>
+      <p class="muted" style="font-size:12px;margin:-4px 0 8px">Sauvegarde en ligne gratuite : tes paris survivent aux mises à jour et même à la perte du téléphone. Voir le guide d'installation.</p>
+      <div id="cloudBox">
+        <input id="cl_url" placeholder="URL du projet Supabase" style="width:100%;margin-bottom:6px" autocapitalize="off" autocomplete="off" spellcheck="false">
+        <input id="cl_key" placeholder="Clé anon (public)" style="width:100%;margin-bottom:6px" autocapitalize="off" autocomplete="off" spellcheck="false">
+        <input id="cl_code" placeholder="Code de synchro (invente un mot de passe)" style="width:100%;margin-bottom:6px" autocapitalize="off" autocomplete="off" spellcheck="false">
+        <button class="btn" onclick="cloudConnect()">Connecter &amp; synchroniser</button>
+        <div class="btn-row">
+          <button class="btn ghost" onclick="cloudSyncNow()">Synchroniser maintenant</button>
+          <button class="btn ghost" onclick="cloudDisconnect()">Déconnecter</button>
+        </div>
+      </div>
+      <div class="muted" id="cl_status" style="font-size:12px;margin-top:8px">Non connecté</div>
+
       <h2 class="section">Données</h2>
       <button class="btn" onclick="exportData()">Exporter (JSON)</button>
       <div class="btn-row">
@@ -228,8 +242,8 @@ table.an td:first-child{font-family:var(--sans)}
       </div>
       <button class="btn danger" style="margin-top:10px" onclick="wipeData()">Tout effacer</button>
       <p class="muted" style="font-size:12px;margin-top:18px">
-        Outil de suivi personnel. Aucun argent réel, aucune donnée envoyée : tout est stocké localement sur cet appareil.
-        Pensez à exporter régulièrement.</p>
+        Outil de suivi personnel. Aucun argent réel. Les données sont stockées localement sur cet appareil et,
+        si la synchro cloud est activée, sauvegardées en ligne. Pensez à exporter de temps en temps.</p>
     </section>
   </main>
 </div>
@@ -259,7 +273,7 @@ function load(){
 function migrate(d){if(!d.customFields)d.customFields=[];
   (d.bankrolls||[]).forEach(b=>{if(b.archived===undefined)b.archived=false;if(!b.oddsFormat)b.oddsFormat='decimal';if(!b.status)b.status='private';});
   return d;}
-function save(){localStorage.setItem(KEY,JSON.stringify(DB));}
+function save(){DB._updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(DB));cloudQueue();}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 if(!DB.activeId&&DB.bankrolls[0])DB.activeId=DB.bankrolls[0].id;
 
@@ -914,6 +928,7 @@ function renderSettings(){
   document.getElementById('customFieldList').innerHTML=(DB.customFields||[]).length?
     DB.customFields.map((f,i)=>`<div class="settings-row"><div class="info"><div class="name">${esc(f)}</div></div>
       <button class="mini-btn" onclick="removeCustomField(${i})">✕</button></div>`).join(''):'<div class="muted" style="font-size:13px;margin-bottom:8px">Aucun champ. Ajoutez des dimensions perso (ex : « Marché », « Confiance »).</div>';
+  renderCloud();
 }
 let editingBkId=null,bkFmt='decimal',bkStatus='private';
 function pickOddsFmt(v){bkFmt=v;document.querySelectorAll('#bk_fmt .chip').forEach(c=>c.classList.toggle('sel',c.dataset.f===v));}
@@ -999,6 +1014,73 @@ function splitCSV(line){const out=[];let cur='',q=false;for(let i=0;i<line.lengt
   if(ch==='"'){if(q&&line[i+1]==='"'){cur+='"';i++;}else q=!q;}else if((ch===';'||ch===',')&&!q){out.push(cur);cur='';}else cur+=ch;}out.push(cur);return out;}
 function wipeData(){if(!confirm('Effacer TOUTES les données ? Irréversible (exportez avant).'))return;
   localStorage.removeItem(KEY);DB=load();save();renderAll();switchView('dash');toast('Données effacées');}
+
+/* ===================== CLOUD SYNC (Supabase) ===================== */
+const CLOUD_KEY='bk_cloud_cfg';
+let cloud=loadCloud();let cloudTimer=null;
+function loadCloud(){try{return JSON.parse(localStorage.getItem(CLOUD_KEY))||{};}catch(e){return {};}}
+function saveCloud(){localStorage.setItem(CLOUD_KEY,JSON.stringify(cloud));}
+function cloudReady(){return !!(cloud.url&&cloud.key&&cloud.code);}
+function cloudHeaders(){return {'apikey':cloud.key,'Authorization':'Bearer '+cloud.key,'Content-Type':'application/json'};}
+function cloudBase(){return cloud.url.replace(/\/+$/,'')+'/rest/v1/bk_sync';}
+function setCloudStatus(t){const el=document.getElementById('cl_status');if(el)el.textContent=t;}
+async function cloudPull(){
+  const r=await fetch(cloudBase()+'?id=eq.'+encodeURIComponent(cloud.code)+'&select=data,updated_at',{headers:cloudHeaders()});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  const rows=await r.json();return rows[0]||null;
+}
+async function cloudPush(){
+  const body=[{id:cloud.code,data:DB,updated_at:new Date().toISOString()}];
+  const r=await fetch(cloudBase(),{method:'POST',headers:{...cloudHeaders(),'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+}
+// Push automatique (anti-rebond) à chaque modification
+function cloudQueue(){
+  if(!cloudReady())return;
+  setCloudStatus('Sauvegarde en cours…');
+  clearTimeout(cloudTimer);
+  cloudTimer=setTimeout(()=>{cloudPush().then(()=>setCloudStatus('Sauvegardé dans le cloud ✓')).catch(e=>setCloudStatus('Hors ligne — sauvegarde locale ('+e.message+')'));},1200);
+}
+// Synchro au démarrage / manuelle : la version la plus récente gagne
+async function cloudSyncNow(silent){
+  if(!cloudReady()){if(!silent)toast('Connecte d abord le cloud');return;}
+  setCloudStatus('Synchronisation…');
+  try{
+    const remote=await cloudPull();
+    const localT=DB._updatedAt||0;
+    const remoteT=remote?new Date(remote.updated_at).getTime():0;
+    if(remote&&remote.data&&remoteT>=localT){
+      DB=migrate(remote.data);if(!DB.activeId)DB.activeId=DB.bankrolls[0]?.id;
+      localStorage.setItem(KEY,JSON.stringify(DB));renderAll();
+      setCloudStatus('Sauvegardé dans le cloud ✓');
+    }else{
+      await cloudPush();setCloudStatus('Sauvegardé dans le cloud ✓');
+    }
+  }catch(e){setCloudStatus('Erreur cloud : '+e.message);if(!silent)toast('Erreur de synchro');}
+}
+async function cloudConnect(){
+  const url=(val('cl_url')||'').trim(),key=(val('cl_key')||'').trim(),code=(val('cl_code')||'').trim();
+  if(!url||!key||!code){toast('Remplis les 3 champs');return;}
+  cloud={url,key,code};saveCloud();setCloudStatus('Connexion…');
+  try{
+    const remote=await cloudPull();
+    if(remote&&remote.data&&(remote.data.bets||[]).length){
+      if(confirm('Des paris existent déjà dans le cloud. Charger les données du cloud ?\n\n(Annuler = remplacer le cloud par les données de cet appareil)')){
+        DB=migrate(remote.data);if(!DB.activeId)DB.activeId=DB.bankrolls[0]?.id;localStorage.setItem(KEY,JSON.stringify(DB));renderAll();
+      }else{await cloudPush();}
+    }else{await cloudPush();}
+    setCloudStatus('Connecté · sauvegardé dans le cloud ✓');toast('Cloud connecté');renderSettings();
+  }catch(e){setCloudStatus('Erreur : '+e.message);toast('Connexion impossible');}
+}
+function cloudDisconnect(){
+  if(!confirm('Déconnecter la synchro cloud ? Tes paris restent sur cet appareil.'))return;
+  cloud={};saveCloud();setCloudStatus('Non connecté');renderSettings();toast('Cloud déconnecté');
+}
+function renderCloud(){
+  const u=document.getElementById('cl_url'),k=document.getElementById('cl_key'),c=document.getElementById('cl_code');
+  if(u)u.value=cloud.url||'';if(k)k.value=cloud.key||'';if(c)c.value=cloud.code||'';
+  if(cloudReady())setCloudStatus('Connecté ✓');else setCloudStatus('Non connecté');
+}
 
 /* ===================== PLUMBING ===================== */
 function switchView(v){document.querySelectorAll('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+v));
@@ -1261,6 +1343,12 @@ function importScannedBets(){
 }
 
 renderAll();
+// Demande au navigateur de ne jamais effacer les données locales (anti-purge iOS)
+if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(()=>{});}
+// Synchro cloud au démarrage (si configurée) : récupère la dernière version
+if(cloudReady())cloudSyncNow(true);
+// Resynchronise à chaque réouverture de l'app
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&cloudReady())cloudSyncNow(true);});
 if('serviceWorker'in navigator){
   // Recharge une seule fois quand un nouveau service worker prend la main
   let swRefreshing=false;
