@@ -18,7 +18,7 @@
   --sans:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%}
+html,body{margin:0;min-height:100%;overflow-x:hidden}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.45;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)}
 #app{max-width:540px;margin:0 auto;padding-bottom:86px}
@@ -199,9 +199,9 @@ table.an td:first-child{font-family:var(--sans)}
 
     <section class="view" id="view-tools">
       <div class="subtabs">
-        <button class="active" data-t="optim" onclick="switchTool('optim')">Optimizer</button>
+        <button class="active" data-t="calc" onclick="switchTool('calc')">Calculatrices</button>
         <button data-t="rising" onclick="switchTool('rising')">Montante</button>
-        <button data-t="calc" onclick="switchTool('calc')">Calculatrices</button>
+        <button data-t="optim" onclick="switchTool('optim')">Optimizer</button>
       </div>
       <div id="tool-optim" class="tsub"></div>
       <div id="tool-rising" class="tsub" style="display:none"></div>
@@ -278,11 +278,35 @@ function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2
 if(!DB.activeId&&DB.bankrolls[0])DB.activeId=DB.bankrolls[0].id;
 
 const CURRENCIES=[['€','EUR €'],['$','USD $'],['£','GBP £'],['CHF','CHF'],['C$','CAD C$'],['A$','AUD A$'],['¥','JPY ¥'],['kr','SEK kr'],['zł','PLN zł'],['₿','BTC ₿']];
+// Listes pour le formulaire de pari (saisie libre toujours possible via datalist)
+const SPORTS=['Football','Basket','Tennis','Rugby','Handball'];
+const COMPETITIONS=['Ligue 1','Premier League','La Liga','Serie A','Bundesliga','Ligue des Champions','Ligue Europa','Conference League','Coupe du Monde','Championnat d\'Europe (Euro)','Ligue des Nations','Coupe de France'];
+const BASE_BOOKMAKERS=['Winamax','Betclic','Unibet','ParionsSport','PMU','Betsson','Bwin','Zebet','Netbet','Vbet','Genybet','Feelingbet','Pinnacle'];
+function bookmakerList(){return [...new Set([...(DB.bankrolls||[]).map(b=>b.name).filter(Boolean),...BASE_BOOKMAKERS])];}
+// Les marches les plus populaires par sport (foot & basket en priorite)
+const BET_MARKETS={
+  'Football':['1N2 (Résultat)','Double chance','Plus/Moins 2.5 buts','Les deux équipes marquent (BTTS)','Handicap asiatique','Score exact','Mi-temps / Fin de match','Buteur','Plus/Moins corners','Cartons'],
+  'Basket':['Vainqueur (Money line)','Handicap','Plus/Moins points','Points d\'un joueur','Rebonds / Passes joueur','Vainqueur 1ère mi-temps','Plus/Moins par équipe','Vainqueur quart-temps','Écart de points','Paris combinés joueur'],
+  'Tennis':['Vainqueur du match','Handicap jeux','Plus/Moins jeux','Score en sets','Vainqueur 1er set','Tie-break (oui/non)','Nombre de sets','Jeux pairs/impairs'],
+  'Rugby':['Vainqueur','Handicap','Plus/Moins points','Première équipe à marquer','Plus/Moins essais','Vainqueur mi-temps','Score exact mi-temps'],
+  'Handball':['Vainqueur','Handicap','Plus/Moins buts','Vainqueur mi-temps','Double chance','Plus/Moins par équipe'],
+  _default:['Vainqueur','Handicap','Plus/Moins','Double chance','Score exact','Buteur / Marqueur']
+};
+function refreshCatList(){const dl=document.getElementById('catList');if(!dl)return;
+  const sport=(document.getElementById('f_sport')?.value||'').trim();
+  const opts=BET_MARKETS[sport]||BET_MARKETS._default;
+  dl.innerHTML=opts.map(o=>`<option value="${o.replace(/"/g,'&quot;')}">`).join('');}
 const fmt=(n,d=2)=>{if(n==null||isNaN(n))return'—';const s=n<0?'-':'';return s+Math.abs(n).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d});};
 const signed=(n,d=2)=>(n>=0?'+':'')+fmt(n,d);
 const cur=()=>activeBankroll()?.currency||'€';
-function activeBankroll(){return DB.bankrolls.find(b=>b.id===DB.activeId);}
-function activeBets(){return DB.bets.filter(b=>b.bankrollId===DB.activeId);}
+const TOTAL_ID='__total__';
+function isTotalActive(){return DB.activeId===TOTAL_ID;}
+function totalBankroll(){const vis=visibleBankrolls();
+  return {id:TOTAL_ID,name:'Total (toutes les bankrolls)',_virtual:true,
+    startingCapital:vis.reduce((a,b)=>a+(+b.startingCapital||0),0),currency:vis[0]?.currency||'€'};}
+function activeBankroll(){return isTotalActive()?totalBankroll():DB.bankrolls.find(b=>b.id===DB.activeId);}
+function activeBets(){if(isTotalActive()){const ids=new Set(visibleBankrolls().map(b=>b.id));return DB.bets.filter(b=>ids.has(b.bankrollId));}
+  return DB.bets.filter(b=>b.bankrollId===DB.activeId);}
 function visibleBankrolls(){return DB.bankrolls.filter(b=>!b.archived);}
 function currentCapital(){const bk=activeBankroll();return bk?computeStats(activeBets(),+bk.startingCapital).capital:0;}
 // format d'affichage des cotes selon la bankroll
@@ -365,9 +389,11 @@ function renderAll(){renderTopbar();renderDash();renderBets();renderSettings();
   if(document.getElementById('view-analyse').classList.contains('active'))renderAnalyse();}
 function renderTopbar(){
   const sel=document.getElementById('bankrollSelect');
-  sel.innerHTML=visibleBankrolls().map(b=>`<option value="${b.id}" ${b.id===DB.activeId?'selected':''}>${esc(b.name)}</option>`).join('');
+  const opts=visibleBankrolls().map(b=>`<option value="${b.id}" ${b.id===DB.activeId?'selected':''}>${esc(b.name)}</option>`);
+  if(visibleBankrolls().length>1)opts.unshift(`<option value="${TOTAL_ID}" ${isTotalActive()?'selected':''}>★ Total (toutes les bankrolls)</option>`);
+  sel.innerHTML=opts.join('');
   const bk=activeBankroll();const st=computeStats(activeBets(),bk?+bk.startingCapital:0);
-  document.getElementById('topCapital').textContent=fmt(st.capital,0)+' '+cur();
+  document.getElementById('topCapital').textContent=fmt(st.capital)+' '+cur();
 }
 function renderDash(){
   const bk=activeBankroll();const bets=activeBets();const st=computeStats(bets,bk?+bk.startingCapital:0);
@@ -377,9 +403,9 @@ function renderDash(){
   document.getElementById('chart').innerHTML=svgChart(equitySeries(bets,bk?+bk.startingCapital:0));
   const cells=[['ROI',(st.roi>=0?'+':'')+fmt(st.roi,1)+'%',st.roi>=0?'pos':'neg'],
     ['Réussite',fmt(st.winRate,0)+'%',''],['Cote moy.',fmt(st.avgOdds,2),''],
-    ['Mise moy.',fmt(st.avgStake,0)+cur(),''],
+    ['Mise moy.',fmt(st.avgStake)+cur(),''],
     ['CLV moy.',st.clv==null?'—':(st.clv>=0?'+':'')+fmt(st.clv,1)+'%',st.clv==null?'':(st.clv>=0?'pos':'neg')],
-    ['Drawdown max',fmt(st.drawdown,0)+cur(),st.drawdown<0?'neg':'']];
+    ['Drawdown max',fmt(st.drawdown)+cur(),st.drawdown<0?'neg':'']];
   document.getElementById('statGrid').innerHTML=cells.map(([k,v,c])=>
     `<div class="stat"><div class="k">${k}</div><div class="v num ${c}">${v}</div></div>`).join('');
   const recent=[...bets].sort((a,b)=>new Date(b.placedAt)-new Date(a.placedAt)).slice(0,5);
@@ -404,8 +430,8 @@ function betRow(b){
       <span class="badge ${cls}">${lbl}</span>${typeBadge}
       ${b.isFreebet?'<span class="badge b-pending">FB</span>':''}${b.isLive?'<span class="badge b-void">LIVE</span>':''}</div>
       <div class="meta">${esc(meta)||'—'}</div></div>
-    <div class="right"><div class="profit num ${settled?(p>=0?'pos':'neg'):'muted'}">${settled?(p>0?signed(betReturn(b)):signed(p)):fmt(betStake(b),0)+cur()}</div>
-      <div class="meta num">mise ${fmt(betStake(b),0)}${cur()}</div></div></div>`;
+    <div class="right"><div class="profit num ${settled?(p>=0?'pos':'neg'):'muted'}">${settled?(p>0?signed(betReturn(b)):signed(p)):fmt(betStake(b))+cur()}</div>
+      <div class="meta num">mise ${fmt(betStake(b))}${cur()}</div></div></div>`;
 }
 function svgChart(pts){
   if(pts.length<2)return `<div class="empty" style="padding:30px">Pas encore de courbe</div>`;
@@ -498,9 +524,10 @@ function applyFilters(){filters.sport=val('ff_sport');filters.book=val('ff_book'
 /* ===================== MODALE PARI ===================== */
 let editingBetId=null,modalStatus='won',modalType='single',modalSelections=[],modalEW=false,modalEwStatus='win',modalPctMode=false;
 function openBetModal(id){
+  if(!id&&isTotalActive()){toast('Choisis une bankroll précise pour ajouter un pari');return;}
   editingBetId=id||null;const b=id?DB.bets.find(x=>x.id===id):null;
   modalType=b?(b.betType||'single'):'single';modalPctMode=false;
-  modalStatus=b?b.status:'won';modalEW=b?!!b.isEachWay:false;modalEwStatus=b?(b.ewStatus||'win'):'win';
+  modalStatus=b?b.status:'pending';modalEW=b?!!b.isEachWay:false;modalEwStatus=b?(b.ewStatus||'win'):'win';
   modalSelections=b&&b.selections?JSON.parse(JSON.stringify(b.selections)):[{label:'',odds:'',status:'won'},{label:'',odds:'',status:'won'}];
   drawBetModal(b);openModal();
 }
@@ -516,7 +543,7 @@ function drawBetModal(b){
   if(modalType==='single'||modalType==='lay'){
     body+=`<div class="toggle-row" style="margin-top:2px"><label><input type="checkbox" id="f_pct" ${modalPctMode?'checked':''} onchange="togglePct(this.checked)"> Mise en % du capital</label></div>
     <div class="field-row">
-      <div><label>${modalPctMode?'Mise (% de '+fmt(currentCapital(),0)+cur()+')':'Mise ('+cur()+')'}</label><input class="num" id="f_stake" type="number" inputmode="decimal" value="${b&&!modalPctMode?b.stake:''}" placeholder="${modalPctMode?'2':'10'}"></div>
+      <div><label>${modalPctMode?'Mise (% de '+fmt(currentCapital())+cur()+')':'Mise ('+cur()+')'}</label><input class="num" id="f_stake" type="number" inputmode="decimal" value="${b&&!modalPctMode?b.stake:''}" placeholder="${modalPctMode?'2':'10'}"></div>
       <div><label>${modalType==='lay'?'Cote Lay':'Cote'}</label><input class="num" id="f_odds" type="number" inputmode="decimal" value="${b?b.odds:''}" placeholder="1.90"></div></div>`;
     if(modalType==='lay'){
       body+=`<label>Commission (%)</label><input class="num" id="f_comm" type="number" value="${b?(b.commission||0):0}">
@@ -552,11 +579,15 @@ function drawBetModal(b){
   body+=`<div class="field-row">
       <div><label>Date</label><input id="f_date" type="date" value="${b?b.placedAt.slice(0,10):today}"></div>
       <div><label>Cote clôture (CLV)</label><input class="num" id="f_closing" type="number" inputmode="decimal" value="${b?(b.closingOdds||''):''}" placeholder="opt."></div></div>
-    <div class="field-row"><div><label>Catégorie</label><input id="f_cat" value="${b?esc(b.category||''):''}" placeholder="ex : Value bet"></div>
-      <div><label>Sport</label><input id="f_sport" value="${b?esc(b.sport||''):''}" placeholder="Football"></div></div>
-    <div class="field-row"><div><label>Compétition</label><input id="f_comp" value="${b?esc(b.competition||''):''}" placeholder="Ligue 1"></div>
-      <div><label>Bookmaker</label><input id="f_book" value="${b?esc(b.bookmaker||''):''}" placeholder="Winamax"></div></div>
-    <div class="field-row"><div><label>Tipster</label><input id="f_tip" value="${b?esc(b.tipster||''):''}" placeholder="—"></div><div></div></div>`;
+    <div class="field-row"><div><label>Sport</label><input id="f_sport" list="sportList" autocomplete="off" oninput="refreshCatList()" value="${b?esc(b.sport||''):'Football'}" placeholder="Football"></div>
+      <div><label>Catégorie (type de pari)</label><input id="f_cat" list="catList" autocomplete="off" value="${b?esc(b.category||''):''}" placeholder="ex : Plus/Moins 2.5 buts"></div></div>
+    <div class="field-row"><div><label>Compétition</label><input id="f_comp" list="compList" autocomplete="off" value="${b?esc(b.competition||''):''}" placeholder="Ligue 1"></div>
+      <div><label>Bookmaker</label><input id="f_book" list="bookList" autocomplete="off" value="${b?esc(b.bookmaker||''):esc(activeBankroll()?.name||'')}" placeholder="Winamax"></div></div>
+    <div class="field-row"><div><label>Tipster</label><input id="f_tip" value="${b?esc(b.tipster||''):''}" placeholder="—"></div><div></div></div>
+    <datalist id="sportList">${SPORTS.map(s=>`<option value="${s}">`).join('')}</datalist>
+    <datalist id="compList">${COMPETITIONS.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
+    <datalist id="bookList">${bookmakerList().map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
+    <datalist id="catList"></datalist>`;
   cf.forEach(f=>{body+=`<label>${esc(f)}</label><input data-cf="${esc(f)}" value="${b&&b.customFields?esc(b.customFields[f]||''):''}">`;});
   body+=`<label>Note</label><textarea id="f_note" placeholder="Détail...">${b?esc(b.note||''):''}</textarea>
     <div class="toggle-row"><label><input type="checkbox" id="f_fb" ${b&&b.isFreebet?'checked':''}> Freebet</label>
@@ -565,6 +596,7 @@ function drawBetModal(b){
     ${editingBetId?`<button class="btn danger" style="margin-top:10px" onclick="deleteBet('${editingBetId}')">Supprimer</button>`:''}
     <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Annuler</button>`;
   document.getElementById('modalContent').innerHTML=body;
+  refreshCatList();
   if(modalType==='combo'||modalType==='system')updateComboInfo();
 }
 function selRow(s,i){
@@ -652,7 +684,7 @@ function renderAnalyzer(){
     <div class="subtabs">${dims.map(([v,l])=>`<button class="${analyzerDim===v?'active':''}" onclick="setDim('${v}')">${l}</button>`).join('')}</div>
     ${rows.length?`<table class="an"><thead><tr><th>${dims.find(d=>d[0]===analyzerDim)[1]}</th><th>Paris</th><th>Profit</th><th>ROI</th><th>Réussite</th></tr></thead>
       <tbody>${rows.map(r=>`<tr><td>${esc(r.k)}</td><td>${r.n}</td>
-        <td class="${r.profit>=0?'pos':'neg'}">${signed(r.profit,0)}</td>
+        <td class="${r.profit>=0?'pos':'neg'}">${signed(r.profit)}</td>
         <td class="${r.roi>=0?'pos':'neg'}">${fmt(r.roi,1)}%</td><td>${fmt(r.wr,0)}%</td></tr>`).join('')}</tbody></table>`
       :'<div class="empty">Aucun pari réglé à analyser.</div>'}`;
 }
@@ -668,10 +700,10 @@ function detailedStatsCard(bets){
   const now=new Date(),mk=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const monthP=bets.filter(b=>b.placedAt.slice(0,7)===mk).reduce((a,b)=>a+betProfit(b),0);
   const fb=bets.filter(b=>b.isFreebet).length;
-  const cells=[['Plus gros gain',signed(best,0)+cur(),'pos'],['Plus grosse perte',signed(worst,0)+cur(),'neg'],
+  const cells=[['Plus gros gain',signed(best)+cur(),'pos'],['Plus grosse perte',signed(worst)+cur(),'neg'],
     ['Série gagnante max',wmax,''],['Série perdante max',lmax,lmax>0?'neg':''],
     ['Cote moy. gagnés',fmt(avgW,2),''],['Cote moy. perdus',fmt(avgL,2),''],
-    ['Profit ce mois',signed(monthP,0)+cur(),monthP>=0?'pos':'neg'],['Freebets',fb,'']];
+    ['Profit ce mois',signed(monthP)+cur(),monthP>=0?'pos':'neg'],['Freebets',fb,'']];
   return `<div class="grid" style="margin-bottom:14px">${cells.map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v num ${c}" style="font-size:18px">${v}</div></div>`).join('')}</div>`;
 }
 function setDim(d){analyzerDim=d;renderAnalyzer();}
@@ -685,11 +717,11 @@ function renderCalendar(){
   for(let d=1;d<=days;d++){const key=`${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const p=byDay[key];const bg=p==null?'':p>=0?'rgba(46,230,166,.13)':'rgba(255,93,108,.13)';
     cells+=`<div class="day" style="${bg?`background:${bg};border-color:${p>=0?'rgba(46,230,166,.3)':'rgba(255,93,108,.3)'}`:''}">
-      <span class="d">${d}</span>${p!=null?`<span class="p ${p>=0?'pos':'neg'}">${signed(p,0)}</span>`:''}</div>`;}
+      <span class="d">${d}</span>${p!=null?`<span class="p ${p>=0?'pos':'neg'}">${signed(p)}</span>`:''}</div>`;}
   document.getElementById('analyse-calendar').innerHTML=`
     <div class="cal-nav"><button onclick="calNav(-1)">‹</button>
       <div style="text-align:center"><div style="text-transform:capitalize;font-weight:600">${monthName}</div>
-      <div class="num ${monthProfit>=0?'pos':'neg'}" style="font-size:13px">${signed(monthProfit,0)}${cur()}</div></div>
+      <div class="num ${monthProfit>=0?'pos':'neg'}" style="font-size:13px">${signed(monthProfit)}${cur()}</div></div>
       <button onclick="calNav(1)">›</button></div>
     <div class="cal">${['L','M','M','J','V','S','D'].map(d=>`<div class="dow">${d}</div>`).join('')}${cells}</div>`;
 }
@@ -699,9 +731,9 @@ function renderBalance(){
   const selBets=DB.bets.filter(b=>balanceSel.includes(b.bankrollId));
   const start=DB.bankrolls.filter(b=>balanceSel.includes(b.id)).reduce((a,b)=>a+ +b.startingCapital,0);
   const st=computeStats(selBets,start);
-  const cells=[['Capital total',fmt(st.capital,0)+cur(),''],['Profit',signed(st.profit,0)+cur(),st.profit>=0?'pos':'neg'],
+  const cells=[['Capital total',fmt(st.capital)+cur(),''],['Profit',signed(st.profit)+cur(),st.profit>=0?'pos':'neg'],
     ['ROI',fmt(st.roi,1)+'%',st.roi>=0?'pos':'neg'],['Paris',st.nBets,''],['Réussite',fmt(st.winRate,0)+'%',''],
-    ['Drawdown',fmt(st.drawdown,0)+cur(),'neg']];
+    ['Drawdown',fmt(st.drawdown)+cur(),'neg']];
   document.getElementById('analyse-balance').innerHTML=`
     <div class="tool"><div class="desc">Cochez les bankrolls à agréger</div>
       <div class="sel-list">${DB.bankrolls.map(b=>`<label><input type="checkbox" ${balanceSel.includes(b.id)?'checked':''} onchange="toggleBalance('${b.id}')"> ${esc(b.name)}</label>`).join('')}</div></div>
@@ -711,7 +743,7 @@ function renderBalance(){
 function toggleBalance(id){balanceSel=balanceSel.includes(id)?balanceSel.filter(x=>x!==id):[...balanceSel,id];renderBalance();}
 
 /* ===================== OUTILS ===================== */
-let toolTab='optim';
+let toolTab='calc';
 function switchTool(t){toolTab=t;
   document.querySelectorAll('#view-tools .subtabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
   ['optim','rising','calc'].forEach(x=>document.getElementById('tool-'+x).style.display=x===t?'block':'none');
@@ -794,12 +826,12 @@ function runOptim(){
   const median=pc(.5),p5=pc(.05),p95=pc(.95),mean=finals.reduce((a,b)=>a+b,0)/finals.length;
   const avgMdd=mdds.reduce((a,b)=>a+b,0)/mdds.length;
   document.getElementById('o_out').innerHTML=`
-    <div class="big ${median>=startBank?'pos':'neg'}">${fmt(median,0)}${cur()} <span style="font-size:13px;font-weight:400" class="muted">capital médian</span></div>
+    <div class="big ${median>=startBank?'pos':'neg'}">${fmt(median)}${cur()} <span style="font-size:13px;font-weight:400" class="muted">capital médian</span></div>
     <table class="an" style="margin-top:10px"><tbody>
-      <tr><td>Capital moyen</td><td class="${mean>=startBank?'pos':'neg'}">${fmt(mean,0)}${cur()}</td></tr>
-      <tr><td>Pire 5% (P5)</td><td class="neg">${fmt(p5,0)}${cur()}</td></tr>
-      <tr><td>Meilleur 5% (P95)</td><td class="pos">${fmt(p95,0)}${cur()}</td></tr>
-      <tr><td>Drawdown moyen</td><td class="neg">${fmt(avgMdd,0)}${cur()}</td></tr>
+      <tr><td>Capital moyen</td><td class="${mean>=startBank?'pos':'neg'}">${fmt(mean)}${cur()}</td></tr>
+      <tr><td>Pire 5% (P5)</td><td class="neg">${fmt(p5)}${cur()}</td></tr>
+      <tr><td>Meilleur 5% (P95)</td><td class="pos">${fmt(p95)}${cur()}</td></tr>
+      <tr><td>Drawdown moyen</td><td class="neg">${fmt(avgMdd)}${cur()}</td></tr>
       <tr><td>Risque de ruine</td><td class="${ruin/nSims>0.05?'neg':''}">${fmt(ruin/nSims*100,1)}%</td></tr></tbody></table>
     ${histoSvg(finals,startBank)}`;
 }
@@ -837,6 +869,10 @@ function calcRising(){
 }
 function renderCalc(){
   document.getElementById('tool-calc').innerHTML=`
+  <div class="tool"><h4>Calculateur de gain</h4><div class="desc">Mise × cote = ce que tu encaisses au total.</div>
+    <div class="field-row"><div><label>Mise (${cur()})</label><input class="num" id="g_stake" type="number" inputmode="decimal" value="10" oninput="gainCalc()"></div>
+      <div><label>Cote</label><input class="num" id="g_odds" type="number" inputmode="decimal" value="1.80" oninput="gainCalc()"></div></div>
+    <div class="out" id="g_out"></div></div>
   <div class="tool"><h4>Surebet / Arbitrage</h4><div class="desc">Profit garanti entre bookmakers.</div>
     <div id="sb_rows"></div><button class="mini-btn" onclick="sbAdd()">+ issue</button>
     <label>Mise totale (${cur()})</label><input class="num" id="sb_total" type="number" value="100" oninput="sbCalc()"><div class="out" id="sb_out"></div></div>
@@ -870,8 +906,12 @@ function renderCalc(){
       <div><label>Pourcentage (%)</label><input class="num" id="pc_pct" type="number" value="2" oninput="pcCalc()"></div></div><div class="out" id="pc_out"></div></div>`;
   sbRows=[2.10,2.10];duRows=[3.0,3.5,4.0];mgRows=[1.90,1.90];rpRows=[2.0,3.0];
   drawRows('sb_rows',sbRows);drawRows('du_rows',duRows);drawRows('mg_rows',mgRows);drawRows('rp_rows',rpRows);
-  sbCalc();duCalc();kCalc();cvCalc();mgCalc();hCalc();rpCalc();baCalc();roCalc();pcCalc();
+  gainCalc();sbCalc();duCalc();kCalc();cvCalc();mgCalc();hCalc();rpCalc();baCalc();roCalc();pcCalc();
 }
+function gainCalc(){const s=+val('g_stake')||0,o=+val('g_odds')||0;const ret=s*o,prof=s*(o-1);
+  const el=document.getElementById('g_out');if(!el)return;
+  el.innerHTML=`<div class="big pos">${fmt(ret)}${cur()} <span style="font-size:13px;font-weight:400" class="muted">gain total</span></div>
+    <div class="muted">Bénéfice net : <b class="num">${signed(prof)}${cur()}</b> · mise récupérée comprise</div>`;}
 let sbRows,duRows,mgRows,rpRows;
 function drawRows(cid,arr){document.getElementById(cid).innerHTML=arr.map((v,i)=>
   `<div class="outcome-row"><input class="num" type="number" value="${v}" oninput="rowSet('${cid}',${i},this.value)" placeholder="cote"><span class="res" id="${cid}_r${i}"></span></div>`).join('');}
@@ -913,7 +953,7 @@ function baCalc(){const o=+val('ba_odds')||0,p=+val('ba_profit')||0,stake=o>1?p/
 function roCalc(){const pr=+val('ro_profit')||0,st=+val('ro_staked')||0,roi=st?pr/st*100:0;
   document.getElementById('ro_out').innerHTML=`<div class="big ${roi>=0?'pos':'neg'}">${fmt(roi,2)}%</div><div class="muted">ROI = profit net / total misé</div>`;}
 function pcCalc(){const c=+val('pc_cap')||0,p=+val('pc_pct')||0,st=c*p/100;
-  document.getElementById('pc_out').innerHTML=`<div class="big">${fmt(st)}${cur()}</div><div class="muted">${fmt(p,1)}% de ${fmt(c,0)}${cur()}</div>`;}
+  document.getElementById('pc_out').innerHTML=`<div class="big">${fmt(st)}${cur()}</div><div class="muted">${fmt(p,1)}% de ${fmt(c)}${cur()}</div>`;}
 function toFrac(x){let best=[1,1],err=1e9;for(let den=1;den<=50;den++){const num=Math.round(x*den);const e=Math.abs(x-num/den);if(e<err){err=e;best=[num,den];}}const g=gcd(best[0],best[1]);return `${best[0]/g}/${best[1]/g}`;}
 function gcd(a,b){return b?gcd(b,a%b):a;}
 
@@ -923,7 +963,7 @@ function renderSettings(){
   document.getElementById('bankrollList').innerHTML=DB.bankrolls.map(b=>{
     const st=computeStats(DB.bets.filter(x=>x.bankrollId===b.id),+b.startingCapital);
     return `<div class="settings-row"><div class="info"><div class="name">${esc(b.name)} ${b.archived?'<span class="badge b-void">archivée</span>':''}</div>
-      <div class="cap">${fmt(st.capital,0)}${b.currency} · ${signed(st.profit,0)}${b.currency} · ${st.nBets} pari(s)</div></div>
+      <div class="cap">${fmt(st.capital)}${b.currency} · ${signed(st.profit)}${b.currency} · ${st.nBets} pari(s)</div></div>
       <button class="mini-btn" onclick="openBankrollModal('${b.id}')">Éditer</button></div>`;}).join('');
   document.getElementById('customFieldList').innerHTML=(DB.customFields||[]).length?
     DB.customFields.map((f,i)=>`<div class="settings-row"><div class="info"><div class="name">${esc(f)}</div></div>
@@ -1022,7 +1062,7 @@ function loadCloud(){try{return JSON.parse(localStorage.getItem(CLOUD_KEY))||{};
 function saveCloud(){localStorage.setItem(CLOUD_KEY,JSON.stringify(cloud));}
 function cloudReady(){return !!(cloud.url&&cloud.key&&cloud.code);}
 function cloudHeaders(){return {'apikey':cloud.key,'Authorization':'Bearer '+cloud.key,'Content-Type':'application/json'};}
-function cloudBase(){return cloud.url.replace(/\/+$/,'')+'/rest/v1/bk_sync';}
+function cloudBase(){let b=cloud.url.trim().replace(/\/+$/,'').replace(/\/rest\/v1$/,'');return b+'/rest/v1/bk_sync';}
 function setCloudStatus(t){const el=document.getElementById('cl_status');if(el)el.textContent=t;}
 async function cloudPull(){
   const r=await fetch(cloudBase()+'?id=eq.'+encodeURIComponent(cloud.code)+'&select=data,updated_at',{headers:cloudHeaders()});
@@ -1087,7 +1127,7 @@ function switchView(v){document.querySelectorAll('.view').forEach(s=>s.classList
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   document.getElementById('fab').style.display=(v==='dash'||v==='bets')?'block':'none';
   if(v==='analyse')renderAnalyse();
-  if(v==='tools'){if(!document.getElementById('tool-optim').innerHTML.trim())renderOptim();switchTool(toolTab);}
+  if(v==='tools')switchTool(toolTab);
   window.scrollTo(0,0);}
 function openModal(){document.getElementById('modalBg').classList.add('open');}
 function closeModal(){document.getElementById('modalBg').classList.remove('open');}
