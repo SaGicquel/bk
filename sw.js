@@ -1,12 +1,12 @@
-const CACHE_NAME = 'bk-cache-v3';
-const APP_SCOPE = '/bk/';
+const CACHE_NAME = 'bk-cache-v4';
+// Chemins relatifs au scope du service worker : fonctionne quel que soit le dossier de déploiement
 const APP_SHELL = [
-  '/bk/',
-  '/bk/index.html',
-  '/bk/manifest.webmanifest',
-  '/bk/icon-192.png',
-  '/bk/icon-512.png',
-  '/bk/apple-touch-icon-180.png'
+  './',
+  './index.html',
+  './manifest.webmanifest',
+  './icon-192.png',
+  './icon-512.png',
+  './apple-touch-icon-180.png'
 ];
 
 self.addEventListener('install', event => {
@@ -33,31 +33,24 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  const url = new URL(req.url);
-
-  // Navigation / app shell => network first for fast updates
-  if (
-    req.mode === 'navigate' ||
-    url.pathname === '/bk' ||
-    url.pathname === '/bk/' ||
-    url.pathname.endsWith('/index.html')
-  ) {
+  // Navigation / app shell => network first pour des mises à jour rapides
+  if (req.mode === 'navigate' || new URL(req.url).pathname.endsWith('/index.html')) {
     event.respondWith(
       fetch(req)
         .then(res => {
           const copy = res.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put('/bk/index.html', copy));
+          caches.open(CACHE_NAME).then(cache => cache.put('./index.html', copy));
           return res;
         })
         .catch(async () => {
           const cached = await caches.match(req);
-          return cached || caches.match('/bk/index.html');
+          return cached || caches.match('./index.html');
         })
     );
     return;
   }
 
-  // Static assets => stale-while-revalidate style
+  // Assets statiques => stale-while-revalidate
   event.respondWith(
     caches.match(req).then(cached => {
       const fetchPromise = fetch(req)
