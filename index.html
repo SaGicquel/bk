@@ -32,6 +32,8 @@ body.has-fab #app{padding-bottom:156px}
 .bk-select select{width:100%;background:var(--surface2);color:var(--text);border:1px solid var(--border);
   border-radius:10px;padding:8px 10px;font-size:14px;font-family:var(--sans);appearance:none}
 .bk-cap{text-align:right;white-space:nowrap}
+.txbtn{width:34px;height:34px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);
+  color:var(--text);font-size:17px;line-height:1;cursor:pointer;flex-shrink:0;font-family:var(--sans)}
 .bk-cap .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 .bk-cap .val{font-size:18px;font-weight:600}
 main{padding:16px}
@@ -171,7 +173,8 @@ input.err,select.err{border-color:var(--neg)}
 <div id="app">
   <div class="topbar">
     <div class="bk-select"><select id="bankrollSelect" onchange="setActiveBankroll(this.value)"></select></div>
-    <div class="bk-cap"><div class="lbl">Capital</div><div class="val num" id="topCapital">—</div></div>
+    <div class="bk-cap"><div class="lbl" id="topCapLbl">Capital</div><div class="val num" id="topCapital">—</div></div>
+    <button class="txbtn" aria-label="Dépôt ou retrait" onclick="openTxModal()">±</button>
   </div>
   <main>
     <section class="view active" id="view-dash">
@@ -218,6 +221,7 @@ input.err,select.err{border-color:var(--neg)}
       <h2 class="section">Bankrolls</h2>
       <div id="bankrollList"></div>
       <button class="btn" onclick="openBankrollModal()">+ Nouvelle bankroll</button>
+      <button class="btn" style="margin-top:8px" onclick="openTxModal()">± Dépôts / retraits</button>
       <h2 class="section">Champs personnalisés</h2>
       <div id="customFieldList"></div>
       <button class="btn" onclick="addCustomField()">+ Ajouter un champ</button>
@@ -289,9 +293,9 @@ function load(){
   try{const r=localStorage.getItem(KEY);if(r)return migrate(JSON.parse(r));}catch(e){}
   // migration depuis v1
   try{const old=localStorage.getItem('bankroll_db_v1');if(old){const d=JSON.parse(old);d.customFields=[];return d;}}catch(e){}
-  return {bankrolls:[{id:uid(),name:'Bankroll principale',startingCapital:100,currency:'€'}],bets:[],activeId:null,customFields:[],settings:{}};
+  return {bankrolls:[{id:uid(),name:'Bankroll principale',startingCapital:100,currency:'€'}],bets:[],activeId:null,customFields:[],transactions:[],settings:{}};
 }
-function migrate(d){if(!d.customFields)d.customFields=[];
+function migrate(d){if(!d.customFields)d.customFields=[];if(!d.transactions)d.transactions=[];
   (d.bankrolls||[]).forEach(b=>{if(b.archived===undefined)b.archived=false;if(!b.oddsFormat)b.oddsFormat='decimal';});
   return d;}
 function save(){DB._updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(DB));cloudQueue();}
@@ -329,7 +333,21 @@ function activeBankroll(){return isTotalActive()?totalBankroll():DB.bankrolls.fi
 function activeBets(){if(isTotalActive()){const ids=new Set(visibleBankrolls().map(b=>b.id));return DB.bets.filter(b=>ids.has(b.bankrollId));}
   return DB.bets.filter(b=>b.bankrollId===DB.activeId);}
 function visibleBankrolls(){return DB.bankrolls.filter(b=>!b.archived);}
-function currentCapital(){const bk=activeBankroll();return bk?computeStats(activeBets(),+bk.startingCapital).capital:0;}
+/* --- Dépôts / retraits (mouvements de capital, hors profit) --- */
+function activeTxs(){const ids=isTotalActive()?new Set(visibleBankrolls().map(b=>b.id)):new Set([DB.activeId]);
+  return (DB.transactions||[]).filter(t=>ids.has(t.bankrollId));}
+function txAmount(t){return (t.type==='withdraw'?-1:1)*(+t.amount||0);}
+function txSumOf(list){return list.reduce((a,t)=>a+txAmount(t),0);}
+function bkTxSum(bkId){return txSumOf((DB.transactions||[]).filter(t=>t.bankrollId===bkId));}
+function activeTxSum(){return txSumOf(activeTxs());}
+/* --- Argent engagé sur les paris en cours --- */
+function isEngaged(b){
+  if(b.betType==='system')return !isSettled(b);
+  if(b.isEachWay)return !b.ewStatus||b.ewStatus==='pending';
+  return b.status==='pending';}
+function engaged(bets){return bets.filter(isEngaged).reduce((a,b)=>
+  a+(b.betType==='lay'?+b.stake*((+b.odds||1)-1):betStake(b)),0);}
+function currentCapital(){const bk=activeBankroll();return bk?computeStats(activeBets(),+bk.startingCapital).capital+activeTxSum():0;}
 // format d'affichage des cotes selon la bankroll
 function fmtOdds(o,fmtType){o=+o;const f=fmtType||activeBankroll()?.oddsFormat||'decimal';if(!(o>1))return (o||0).toFixed(2);
   if(f==='american')return o>=2?'+'+Math.round((o-1)*100):''+Math.round(-100/(o-1));
@@ -401,9 +419,10 @@ function computeStats(bets,start){
 function maxDrawdown(settled,start){let eq=start,peak=start,mdd=0;
   [...settled].sort((a,b)=>new Date(a.placedAt)-new Date(b.placedAt))
     .forEach(b=>{eq+=betProfit(b);peak=Math.max(peak,eq);mdd=Math.min(mdd,eq-peak);});return mdd;}
-function equitySeries(bets,start){
-  const settled=bets.filter(isSettled).sort((a,b)=>new Date(a.placedAt)-new Date(b.placedAt));
-  let eq=start;const pts=[start];settled.forEach(b=>{eq+=betProfit(b);pts.push(eq);});return pts;}
+function equitySeries(bets,start,txs){
+  const ev=[...bets.filter(isSettled).map(b=>({d:b.placedAt,v:betProfit(b)})),
+    ...(txs||[]).map(t=>({d:t.date,v:txAmount(t)}))].sort((a,b)=>new Date(a.d)-new Date(b.d));
+  let eq=start;const pts=[start];ev.forEach(e=>{eq+=e.v;pts.push(eq);});return pts;}
 
 /* ===================== RENDER GLOBAL ===================== */
 function renderAll(){renderTopbar();renderDash();renderBets();renderSettings();
@@ -413,8 +432,12 @@ function renderTopbar(){
   const opts=visibleBankrolls().map(b=>`<option value="${b.id}" ${b.id===DB.activeId?'selected':''}>${esc(b.name)}</option>`);
   if(visibleBankrolls().length>1)opts.unshift(`<option value="${TOTAL_ID}" ${isTotalActive()?'selected':''}>★ Total (toutes les bankrolls)</option>`);
   sel.innerHTML=opts.join('');
-  const bk=activeBankroll();const st=computeStats(activeBets(),bk?+bk.startingCapital:0);
-  document.getElementById('topCapital').textContent=fmt(st.capital)+' '+cur();
+  const bk=activeBankroll();const bets=activeBets();
+  const st=computeStats(bets,bk?+bk.startingCapital:0);
+  const eng=engaged(bets),avail=st.capital+activeTxSum()-eng;
+  document.getElementById('topCapital').textContent=fmt(avail)+' '+cur();
+  const lbl=document.getElementById('topCapLbl');
+  if(lbl)lbl.textContent=eng>0?`Dispo · ${fmt(eng,0)}${cur()} en jeu`:'Capital';
 }
 let chartPeriod=localStorage.getItem('bk_period')||'all';
 function setPeriod(p){chartPeriod=p;localStorage.setItem('bk_period',p);renderDash();}
@@ -424,7 +447,10 @@ function renderDash(){
   const bk=activeBankroll();const all=activeBets();const cut=periodCutoff();
   const bets=cut?all.filter(b=>b.placedAt>=cut):all;
   const before=cut?all.filter(b=>b.placedAt<cut):[];
-  const start=(bk?+bk.startingCapital:0)+before.filter(isSettled).reduce((a,b)=>a+betProfit(b),0);
+  const txAll=activeTxs();
+  const txPeriod=cut?txAll.filter(t=>t.date>=cut):txAll;
+  const txBefore=cut?txAll.filter(t=>t.date<cut):[];
+  const start=(bk?+bk.startingCapital:0)+before.filter(isSettled).reduce((a,b)=>a+betProfit(b),0)+txSumOf(txBefore);
   const st=computeStats(bets,start);
   const pl=document.getElementById('heroPL');pl.textContent=signed(st.profit)+' '+cur();
   pl.className='pl num '+(st.profit>=0?'pos':'neg');
@@ -432,10 +458,12 @@ function renderDash(){
   document.getElementById('heroSub').textContent=`Profit ${plabel} · ${st.nBets} pari${st.nBets>1?'s':''} réglé${st.nBets>1?'s':''}`;
   document.getElementById('heroPeriod').innerHTML=[['7','7 j'],['30','30 j'],['90','90 j'],['all','Tout']]
     .map(([v,l])=>`<div class="chip small ${chartPeriod===v?'sel':''}" onclick="setPeriod('${v}')">${l}</div>`).join('');
-  document.getElementById('chart').innerHTML=svgChart(equitySeries(bets,start));
+  document.getElementById('chart').innerHTML=svgChart(equitySeries(bets,start,txPeriod));
+  const eng=engaged(all);
   const cells=[['ROI',(st.roi>=0?'+':'')+fmt(st.roi,1)+'%',st.roi>=0?'pos':'neg'],
     ['Réussite',fmt(st.winRate,0)+'%',''],['Cote moy.',fmt(st.avgOdds,2),''],
     ['Mise moy.',fmt(st.avgStake)+cur(),'']];
+  if(eng>0)cells.push(['En jeu',fmt(eng)+cur(),'']);
   if(st.clv!=null)cells.push(['CLV moy.',(st.clv>=0?'+':'')+fmt(st.clv,1)+'%',st.clv>=0?'pos':'neg']);
   cells.push(['Drawdown max',fmt(st.drawdown)+cur(),st.drawdown<0?'neg':'']);
   document.getElementById('statGrid').innerHTML=cells.map(([k,v,c])=>
@@ -841,15 +869,16 @@ function calNav(d){calMonth+=d;if(calMonth<0){calMonth=11;calYear--;}if(calMonth
 function renderBalance(){
   if(!balanceSel.length)balanceSel=DB.bankrolls.map(b=>b.id);
   const selBets=DB.bets.filter(b=>balanceSel.includes(b.bankrollId));
+  const selTxs=(DB.transactions||[]).filter(t=>balanceSel.includes(t.bankrollId));
   const start=DB.bankrolls.filter(b=>balanceSel.includes(b.id)).reduce((a,b)=>a+ +b.startingCapital,0);
   const st=computeStats(selBets,start);
-  const cells=[['Capital total',fmt(st.capital)+cur(),''],['Profit',signed(st.profit)+cur(),st.profit>=0?'pos':'neg'],
+  const cells=[['Capital total',fmt(st.capital+txSumOf(selTxs))+cur(),''],['Profit',signed(st.profit)+cur(),st.profit>=0?'pos':'neg'],
     ['ROI',fmt(st.roi,1)+'%',st.roi>=0?'pos':'neg'],['Paris',st.nBets,''],['Réussite',fmt(st.winRate,0)+'%',''],
     ['Drawdown',fmt(st.drawdown)+cur(),'neg']];
   document.getElementById('analyse-balance').innerHTML=`
     <div class="tool"><div class="desc">Cochez les bankrolls à agréger</div>
       <div class="sel-list">${DB.bankrolls.map(b=>`<label><input type="checkbox" ${balanceSel.includes(b.id)?'checked':''} onchange="toggleBalance('${b.id}')"> ${esc(b.name)}</label>`).join('')}</div></div>
-    <div class="hero"><div class="chart">${svgChart(equitySeries(selBets,start))}</div></div>
+    <div class="hero"><div class="chart">${svgChart(equitySeries(selBets,start,selTxs))}</div></div>
     <div class="grid">${cells.map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v num ${c}">${v}</div></div>`).join('')}</div>`;
 }
 function toggleBalance(id){balanceSel=balanceSel.includes(id)?balanceSel.filter(x=>x!==id):[...balanceSel,id];renderBalance();}
@@ -1071,11 +1100,52 @@ function gcd(a,b){return b?gcd(b,a%b):a;}
 
 /* ===================== BANKROLLS / CHAMPS PERSO ===================== */
 function setActiveBankroll(id){DB.activeId=id;save();renderAll();}
+/* ---- Dépôts / retraits ---- */
+let txType='deposit',txUndoBuf=null;
+function pickTx(t){txType=t;document.querySelectorAll('#txChips .chip').forEach(c=>c.classList.toggle('sel',c.dataset.t===t));}
+function openTxModal(){
+  txType='deposit';
+  const isTot=isTotalActive(),bks=visibleBankrolls();
+  const txs=activeTxs().sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,12);
+  document.getElementById('modalContent').innerHTML=`<h3>Dépôt / Retrait</h3>
+    <div class="muted" style="font-size:12px;margin:-6px 0 8px">Ajuste le capital sans compter dans le profit ni le ROI.</div>
+    ${isTot?`<label>Bankroll</label><select id="tx_bk">${bks.map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select>`:''}
+    <label>Type</label><div class="chips" id="txChips">
+      <div class="chip sel" data-t="deposit" onclick="pickTx('deposit')">Dépôt (+)</div>
+      <div class="chip" data-t="withdraw" onclick="pickTx('withdraw')">Retrait (−)</div></div>
+    <div class="field-row"><div><label>Montant (${cur()})</label><input class="num" id="tx_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="50"></div>
+      <div><label>Date</label><input id="tx_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div></div>
+    <label>Note</label><input id="tx_note" placeholder="ex : retrait vers compte bancaire">
+    <div class="btn-row"><button class="btn primary" onclick="saveTx()">Enregistrer</button></div>
+    ${txs.length?`<h2 class="section">Derniers mouvements</h2>`+txs.map(t=>{
+      const bkn=isTot?(DB.bankrolls.find(b=>b.id===t.bankrollId)?.name||''):'';
+      return `<div class="settings-row"><div class="info"><div class="name num ${t.type==='withdraw'?'neg':'pos'}">${t.type==='withdraw'?'−':'+'}${fmt(+t.amount)}${cur()}</div>
+        <div class="cap">${fmtDate(t.date)}${bkn?' · '+esc(bkn):''}${t.note?' · '+esc(t.note):''}</div></div>
+        <button class="mini-btn" onclick="deleteTx('${t.id}')">✕</button></div>`;}).join(''):''}
+    <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Fermer</button>`;
+  openModal();
+}
+function saveTx(){
+  const amt=pfr(val('tx_amount'));
+  markErr('tx_amount',!(amt>0));
+  if(!(amt>0)){toast('Montant requis');return;}
+  const bkId=isTotalActive()?val('tx_bk'):DB.activeId;
+  DB.transactions.push({id:uid(),bankrollId:bkId,type:txType,amount:amt,
+    date:val('tx_date')||new Date().toISOString().slice(0,10),note:val('tx_note').trim()});
+  save();renderAll();closeModal();
+  toast(txType==='withdraw'?'Retrait enregistré':'Dépôt enregistré');
+}
+function deleteTx(id){
+  const rm=(DB.transactions||[]).find(t=>t.id===id);if(!rm)return;
+  DB.transactions=DB.transactions.filter(t=>t.id!==id);save();renderAll();closeModal();
+  txUndoBuf=rm;
+  toastAction('Mouvement supprimé','Annuler',()=>{if(txUndoBuf){DB.transactions.push(txUndoBuf);txUndoBuf=null;save();renderAll();}});
+}
 function renderSettings(){
   document.getElementById('bankrollList').innerHTML=DB.bankrolls.map(b=>{
     const st=computeStats(DB.bets.filter(x=>x.bankrollId===b.id),+b.startingCapital);
     return `<div class="settings-row"><div class="info"><div class="name">${esc(b.name)} ${b.archived?'<span class="badge b-void">archivée</span>':''}</div>
-      <div class="cap">${fmt(st.capital)}${b.currency} · ${signed(st.profit)}${b.currency} · ${st.nBets} pari(s)</div></div>
+      <div class="cap">${fmt(st.capital+bkTxSum(b.id))}${b.currency} · ${signed(st.profit)}${b.currency} · ${st.nBets} pari(s)</div></div>
       <button class="mini-btn" onclick="openBankrollModal('${b.id}')">Éditer</button></div>`;}).join('');
   document.getElementById('customFieldList').innerHTML=(DB.customFields||[]).length?
     DB.customFields.map((f,i)=>`<div class="settings-row"><div class="info"><div class="name">${esc(f)}</div></div>
@@ -1105,6 +1175,7 @@ function saveBankroll(){const name=val('bk_name').trim()||'Bankroll',cap=+val('b
 function duplicateBankroll(id){const b=DB.bankrolls.find(x=>x.id===id);if(!b)return;
   const nid=uid();DB.bankrolls.push({...b,id:nid,name:b.name+' (copie)',archived:false});
   DB.bets.filter(x=>x.bankrollId===id).forEach(x=>DB.bets.push({...x,id:uid(),bankrollId:nid,createdAt:Date.now()}));
+  (DB.transactions||[]).filter(t=>t.bankrollId===id).forEach(t=>DB.transactions.push({...t,id:uid(),bankrollId:nid}));
   DB.activeId=nid;save();renderAll();closeModal();toast('Bankroll dupliquée');}
 function toggleArchive(id){const b=DB.bankrolls.find(x=>x.id===id);if(!b)return;
   if(!b.archived&&visibleBankrolls().length<=1){toast('Au moins une bankroll active requise');return;}
@@ -1120,11 +1191,13 @@ function mergeBankrolls(srcId){const tgtId=val('mg_target');if(!tgtId||tgtId===s
   const src=DB.bankrolls.find(b=>b.id===srcId),tgt=DB.bankrolls.find(b=>b.id===tgtId);
   if(!confirm(`Fusionner « ${src.name} » dans « ${tgt.name} » ?`))return;
   DB.bets.forEach(b=>{if(b.bankrollId===srcId)b.bankrollId=tgtId;});
+  (DB.transactions||[]).forEach(t=>{if(t.bankrollId===srcId)t.bankrollId=tgtId;});
   tgt.startingCapital=+tgt.startingCapital+ +src.startingCapital;
   DB.bankrolls=DB.bankrolls.filter(b=>b.id!==srcId);if(DB.activeId===srcId)DB.activeId=tgtId;
   save();renderAll();closeModal();toast('Bankrolls fusionnées');}
 function deleteBankroll(id){if(!confirm('Supprimer cette bankroll et tous ses paris ?'))return;
   DB.bankrolls=DB.bankrolls.filter(b=>b.id!==id);DB.bets=DB.bets.filter(b=>b.bankrollId!==id);
+  DB.transactions=(DB.transactions||[]).filter(t=>t.bankrollId!==id);
   if(DB.activeId===id)DB.activeId=DB.bankrolls[0]?.id;save();renderAll();closeModal();toast('Bankroll supprimée');}
 function addCustomField(){const n=prompt('Nom du champ personnalisé :');if(!n)return;
   DB.customFields=DB.customFields||[];if(DB.customFields.includes(n.trim()))return;DB.customFields.push(n.trim());save();renderSettings();toast('Champ ajouté');}
