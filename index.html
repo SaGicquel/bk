@@ -42,7 +42,16 @@ h2.section{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var
 .hero{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:14px}
 .hero .pl{font-size:40px;font-weight:700;line-height:1}
 .hero .sub{font-size:13px;color:var(--muted);margin-top:6px}
-.chart{margin-top:14px}.chart svg{width:100%;height:140px;display:block}
+.chart{margin-top:14px;position:relative}.chart svg{width:100%;height:140px;display:block;touch-action:none}
+#chartCursor{position:absolute;top:0;bottom:0;width:1.5px;background:var(--accent);opacity:.8;display:none;pointer-events:none}
+#chartTip{font-size:12px;color:var(--muted);text-align:center;min-height:17px;margin-top:6px;font-family:var(--mono)}
+.goalwrap{margin-top:12px}
+.goalbar{height:8px;background:var(--surface2);border-radius:4px;overflow:hidden}
+.goalfill{height:100%;background:linear-gradient(90deg,var(--accent),var(--pos));border-radius:4px;transition:width .4s}
+.goaltxt{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px}
+.advise{margin-top:8px;background:rgba(255,176,32,.08);border:1px solid rgba(255,176,32,.25);border-radius:10px;padding:9px 11px;font-size:12px;color:var(--muted);line-height:1.5}
+.advise b{color:var(--accent);font-size:14px;font-family:var(--mono)}
+.advise .apply{float:right;background:var(--accent);color:#1a1205;border:none;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;margin-left:8px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 14px}
 .stat .k{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
@@ -125,12 +134,12 @@ table.an th{text-align:right;color:var(--muted);font-weight:500;font-size:11px;t
 table.an th:first-child,table.an td:first-child{text-align:left}
 table.an td{padding:9px 8px;border-bottom:1px solid var(--border);font-family:var(--mono);font-variant-numeric:tabular-nums}
 table.an td:first-child{font-family:var(--sans)}
-.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
 .cal .dow{font-size:10px;color:var(--muted);text-align:center;padding:2px 0}
-.cal .day{aspect-ratio:1;border-radius:8px;background:var(--surface);border:1px solid var(--border);
+.cal .day{aspect-ratio:1;border-radius:8px;background:var(--surface);border:1px solid var(--border);min-width:0;overflow:hidden;
   display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;position:relative}
-.cal .day .d{color:var(--muted);font-size:10px}
-.cal .day .p{font-family:var(--mono);font-size:10px;font-weight:600;margin-top:1px}
+.cal .day .d{color:var(--muted);font-size:9px}
+.cal .day .p{font-family:var(--mono);font-size:9px;font-weight:600;margin-top:1px;max-width:100%;overflow:hidden;text-overflow:clip;white-space:nowrap}
 .cal .day.empty{background:transparent;border:none}
 .cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
 .cal-nav button{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:8px;
@@ -182,7 +191,9 @@ input.err,select.err{border-color:var(--neg)}
         <div class="pl num" id="heroPL">—</div>
         <div class="sub" id="heroSub">Profit total</div>
         <div class="chart" id="chart"></div>
-        <div class="chips" id="heroPeriod" style="margin-top:12px"></div>
+        <div id="chartTip"></div>
+        <div class="chips" id="heroPeriod" style="margin-top:8px"></div>
+        <div class="goalwrap" id="goalBox"></div>
       </div>
       <div class="grid" id="statGrid"></div>
       <h2 class="section">Derniers paris</h2>
@@ -298,7 +309,13 @@ function load(){
 function migrate(d){if(!d.customFields)d.customFields=[];if(!d.transactions)d.transactions=[];
   (d.bankrolls||[]).forEach(b=>{if(b.archived===undefined)b.archived=false;if(!b.oddsFormat)b.oddsFormat='decimal';});
   return d;}
-function save(){DB._updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(DB));cloudQueue();}
+function save(){DB._updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(DB));cloudQueue();updateBadge();}
+// Badge sur l'icône de l'app (PWA iOS/Android) : nombre de paris en cours
+function updateBadge(){
+  if(!('setAppBadge'in navigator))return;
+  const n=DB.bets.filter(isEngaged).length;
+  (n?navigator.setAppBadge(n):navigator.clearAppBadge()).catch(()=>{});
+}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 if(!DB.activeId&&DB.bankrolls[0])DB.activeId=DB.bankrolls[0].id;
 
@@ -440,6 +457,10 @@ function renderTopbar(){
   if(lbl)lbl.textContent=eng>0?`Dispo · ${fmt(eng,0)}${cur()} en jeu`:'Capital';
 }
 let chartPeriod=localStorage.getItem('bk_period')||'all';
+let chartLog=localStorage.getItem('bk_chartlog')==='1';
+function toggleLog(){
+  if(!chartLog&&window.chartD&&Math.min(...window.chartD.pts)<=0){toast('Échelle log impossible : la courbe passe par 0 ou moins');return;}
+  chartLog=!chartLog;localStorage.setItem('bk_chartlog',chartLog?'1':'0');renderDash();}
 function setPeriod(p){chartPeriod=p;localStorage.setItem('bk_period',p);renderDash();}
 function periodCutoff(){const days={'7':7,'30':30,'90':90}[chartPeriod];if(!days)return null;
   const d=new Date();d.setDate(d.getDate()-days);return d.toISOString().slice(0,10);}
@@ -457,8 +478,30 @@ function renderDash(){
   const plabel={'7':'7 derniers jours','30':'30 derniers jours','90':'90 derniers jours'}[chartPeriod]||'total';
   document.getElementById('heroSub').textContent=`Profit ${plabel} · ${st.nBets} pari${st.nBets>1?'s':''} réglé${st.nBets>1?'s':''}`;
   document.getElementById('heroPeriod').innerHTML=[['7','7 j'],['30','30 j'],['90','90 j'],['all','Tout']]
-    .map(([v,l])=>`<div class="chip small ${chartPeriod===v?'sel':''}" onclick="setPeriod('${v}')">${l}</div>`).join('');
-  document.getElementById('chart').innerHTML=svgChart(equitySeries(bets,start,txPeriod));
+    .map(([v,l])=>`<div class="chip small ${chartPeriod===v?'sel':''}" onclick="setPeriod('${v}')">${l}</div>`).join('')
+    +`<div class="chip small ${chartLog?'sel':''}" onclick="toggleLog()">log</div>`;
+  // Courbe avec dates (pour le scrub tactile) : paris réglés + mouvements
+  const evs=[...bets.filter(isSettled).map(b=>({d:b.placedAt,v:betProfit(b)})),
+    ...txPeriod.map(t=>({d:t.date,v:txAmount(t)}))].sort((a,b)=>new Date(a.d)-new Date(b.d));
+  let eq=start;const pts=[start],dts=[null];
+  evs.forEach(e=>{eq+=e.v;pts.push(eq);dts.push(e.d);});
+  window.chartD={pts,dts};
+  const drawPts=(chartLog&&Math.min(...pts)>0)?pts.map(Math.log):pts;
+  document.getElementById('chart').innerHTML=svgChart(drawPts)+'<div id="chartCursor"></div>';
+  // Objectif de bankroll
+  const gb=document.getElementById('goalBox');
+  if(gb){
+    if(!isTotalActive()&&bk&&+bk.goal>0){
+      const capNow=computeStats(all,+bk.startingCapital).capital+activeTxSum();
+      const pctG=Math.max(0,Math.min(100,capNow/+bk.goal*100));
+      const stAll=computeStats(all.filter(isSettled),0);
+      const perBet=stAll.avgStake*stAll.roi/100;
+      const remain=+bk.goal-capNow;
+      const proj=remain<=0?'objectif atteint 🎉':(perBet>0?`~${Math.ceil(remain/perBet)} paris restants à ce rythme`:'ROI ≤ 0 — projection impossible');
+      gb.innerHTML=`<div class="goalbar"><div class="goalfill" style="width:${pctG}%"></div></div>
+        <div class="goaltxt"><span>Objectif ${fmt(+bk.goal,0)}${cur()}</span><span>${fmt(pctG,0)}% · ${proj}</span></div>`;
+    }else gb.innerHTML='';
+  }
   const eng=engaged(all);
   const cells=[['ROI',(st.roi>=0?'+':'')+fmt(st.roi,1)+'%',st.roi>=0?'pos':'neg'],
     ['Réussite',fmt(st.winRate,0)+'%',''],['Cote moy.',fmt(st.avgOdds,2),''],
@@ -653,6 +696,50 @@ function sugChips(inputId,values){
     `<div class="chip small" onclick="setInput('${inputId}',this.textContent)">${esc(v)}</div>`).join('')}</div>`;
 }
 function setInput(id,v){const e=document.getElementById(id);if(e){e.value=v;e.classList.remove('err');if(id==='f_sport')refreshCatList();}}
+/* --- Mise conseillée : ¼ Kelly sur proba estimée depuis l'historique (lissage bayésien vers la proba implicite) --- */
+function adviseStake(odds){
+  const capital=currentCapital();if(!(capital>0))return null;
+  const hist=activeBets().filter(b=>isSettled(b)&&!b.isFreebet&&b.betType!=='lay'&&betOdds(b)>0);
+  if(!(odds>=1.01))return null;
+  if(hist.length<10)
+    return {stake:capital*0.02,txt:`Base prudente : 2% du capital. Il faut ≥ 10 paris réglés pour affiner (${hist.length} actuellement).`};
+  const sim=hist.filter(b=>{const o=betOdds(b);return o>=odds/1.25&&o<=odds*1.25;});
+  const pool=sim.length>=10?sim:hist;
+  const wins=pool.filter(isWin).length,n=pool.length;
+  const p0=1/odds,m=10;
+  const p=(wins+m*p0)/(n+m);
+  const f=(p*odds-1)/(odds-1);
+  if(f<=0)
+    return {stake:capital*0.01,txt:`Pas d'edge détecté à cette cote (réussite ${fmt(wins/n*100,0)}% sur ${n} paris${sim.length>=10?' similaires':''}) → mise prudente 1%.`};
+  const frac=Math.min(0.05,f*0.25);
+  return {stake:capital*frac,txt:`¼ Kelly = ${fmt(frac*100,1)}% du capital · réussite ${fmt(wins/n*100,0)}% sur ${n} paris ${sim.length>=10?'à cotes similaires':'(toutes cotes)'} · p estimée ${fmt(p*100,0)}% vs implicite ${fmt(p0*100,0)}%.`};
+}
+function updateAdvise(){
+  const el=document.getElementById('adviseBox');if(!el)return;
+  if(modalType==='lay'||modalPctMode){el.innerHTML='';return;}
+  const odds=(modalType==='combo'||modalType==='system')
+    ?comboOdds(modalSelections.filter(s=>pfr(s.odds)>0))
+    :pfr(val('f_odds'));
+  const a=adviseStake(odds);
+  if(!a){el.innerHTML='';return;}
+  el.innerHTML=`<div class="advise"><button class="apply" onclick="setInput('f_stake','${a.stake.toFixed(2)}')">Utiliser</button>
+    Mise conseillée : <b>${fmt(a.stake)}${cur()}</b><br>${a.txt}</div>`;
+}
+/* --- Tes paris habituels : configurations les plus fréquentes de ton historique --- */
+let tmplList=[];
+function betTemplates(){
+  const cnt={};
+  activeBets().slice(-200).forEach(b=>{
+    if((b.betType||'single')!=='single')return;
+    const k=[b.sport||'',b.category||'',b.competition||'',b.bookmaker||''].join('|');
+    if(k==='|||')return;
+    (cnt[k]=cnt[k]||{n:0,stakes:[],b:null}).n++;cnt[k].stakes.push(+b.stake||0);cnt[k].b=b;});
+  return Object.values(cnt).filter(x=>x.n>=3).sort((a,b)=>b.n-a.n).slice(0,3);
+}
+function applyTmpl(i){const t=tmplList[i];if(!t)return;captureDraft();
+  const b=t.b,med=[...t.stakes].sort((x,y)=>x-y)[Math.floor(t.stakes.length/2)];
+  Object.assign(modalDraft,{sport:b.sport||'',cat:b.category||'',comp:b.competition||'',book:b.bookmaker||'',stake:med||''});
+  drawBetModal();toast('Pré-rempli depuis tes habitudes');}
 function drawBetModal(){
   const md=modalDraft;
   const types=[['single','Simple'],['combo','Combiné'],['system','Système'],['lay','Lay']];
@@ -663,11 +750,19 @@ function drawBetModal(){
     <label>Type de pari</label>
     <div class="chips">${types.map(([v,l])=>`<div class="chip ${modalType===v?'sel':''}" onclick="setBetType('${v}')">${l}</div>`).join('')}</div>`;
 
+  tmplList=(!editingBetId&&modalType==='single')?betTemplates():[];
+  if(tmplList.length){
+    body+=`<label>Tes paris habituels</label><div class="chips scroll">${tmplList.map((t,i)=>{
+      const b=t.b,med=[...t.stakes].sort((x,y)=>x-y)[Math.floor(t.stakes.length/2)];
+      return `<div class="chip small" onclick="applyTmpl(${i})">${esc([b.sport,b.category,b.competition].filter(Boolean).join(' · ')||b.bookmaker||'—')} · ${fmt(med,0)}${cur()} <span class="muted">×${t.n}</span></div>`;}).join('')}</div>`;
+  }
+
   if(modalType==='single'||modalType==='lay'){
     body+=`<div class="toggle-row" style="margin-top:2px"><label><input type="checkbox" id="f_pct" ${modalPctMode?'checked':''} onchange="togglePct(this.checked)"> Mise en % du capital</label></div>
     <div class="field-row">
       <div><label>${modalPctMode?'Mise (% de '+fmt(currentCapital())+cur()+')':'Mise ('+cur()+')'}</label><input class="num" id="f_stake" ${NUM} value="${esc(md.stake)}" placeholder="${modalPctMode?'2':'10'}"></div>
-      <div><label>${modalType==='lay'?'Cote Lay':'Cote'}</label><input class="num" id="f_odds" ${NUM} value="${esc(md.odds)}" placeholder="1.90"></div></div>`;
+      <div><label>${modalType==='lay'?'Cote Lay':'Cote'}</label><input class="num" id="f_odds" ${NUM} value="${esc(md.odds)}" placeholder="1.90" oninput="updateAdvise()"></div></div>
+    <div id="adviseBox"></div>`;
     if(modalType==='lay'){
       body+=`<label>Commission (%)</label><input class="num" id="f_comm" ${NUM} value="${esc(md.comm)}">
         <label>Résultat du Lay</label><div class="chips">
@@ -693,6 +788,7 @@ function drawBetModal(){
     body+=`<label>Sélections</label><div id="selWrap">${modalSelections.map((s,i)=>selRow(s,i)).join('')}</div>
       <button class="mini-btn" onclick="addSel()">+ sélection</button>
       <div class="out" id="comboInfo" style="margin-top:10px;border:none;padding:0"></div>
+      <div id="adviseBox"></div>
       <div class="field-row"><div><label>${modalType==='system'?'Mise par combinaison':'Mise totale'} (${cur()})</label>
         <input class="num" id="f_stake" ${NUM} value="${esc(md.stake)}" placeholder="10"></div>`;
     if(modalType==='system')body+=`<div><label>Système (k parmi n)</label><select class="num" id="f_sysk">${[2,3,4,5,6].map(k=>`<option value="${k}" ${+md.sysk===k?'selected':''}>${k}</option>`).join('')}</select></div>`;
@@ -721,12 +817,32 @@ function drawBetModal(){
     <datalist id="compList">${COMPETITIONS.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
     <datalist id="bookList">${bookmakerList().map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
     <datalist id="catList"></datalist>
-    <div class="btn-row"><button class="btn primary" onclick="saveBet()">${editingBetId?'Enregistrer':'Ajouter'}</button></div>
-    ${editingBetId?`<button class="btn danger" style="margin-top:10px" onclick="deleteBet('${editingBetId}')">Supprimer</button>`:''}
+    ${editingBetId
+      ?`<div class="btn-row"><button class="btn primary" onclick="saveBet()">Enregistrer</button></div>
+        <div class="btn-row"><button class="btn ghost" onclick="duplicateBet('${editingBetId}')">Dupliquer</button>
+        <button class="btn danger" onclick="deleteBet('${editingBetId}')">Supprimer</button></div>`
+      :`<div class="btn-row"><button class="btn primary" onclick="saveBet()">Ajouter</button>
+        <button class="btn" onclick="saveBet(true)">＋ Suivant</button></div>`}
     <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Annuler</button>`;
   document.getElementById('modalContent').innerHTML=body;
   refreshCatList();
   if(modalType==='combo'||modalType==='system')updateComboInfo();
+  updateAdvise();
+}
+// Dupliquer : repart du pari comme brouillon (date du jour, statut en cours)
+function duplicateBet(id){
+  const b=DB.bets.find(x=>x.id===id);if(!b)return;
+  const c=JSON.parse(JSON.stringify(b));
+  editingBetId=null;
+  modalType=c.betType||'single';modalPctMode=false;modalStatus='pending';
+  modalEW=!!c.isEachWay;modalEwStatus='pending';
+  modalSelections=c.selections?c.selections.map(s=>({...s,status:'pending'})):[{label:'',odds:'',status:'won'},{label:'',odds:'',status:'won'}];
+  modalDraft={stake:c.stake??'',odds:c.odds??'',comm:c.commission||0,cashout:'',
+    date:new Date().toISOString().slice(0,10),closing:'',
+    sport:c.sport||'',cat:c.category||'',comp:c.competition||'',book:c.bookmaker||'',tip:c.tipster||'',
+    note:'',fb:false,live:false,ewfrac:c.ewFraction||'1/4',sysk:c.systemK||2,cf:{...(c.customFields||{})}};
+  advOpen=!!(c.category||c.competition||c.tipster);
+  drawBetModal();toast('Copie du pari — vérifie mise et date');
 }
 function selRow(s,i){
   const st=[['won','G'],['lost','P'],['void','A'],['pending','?']];
@@ -748,6 +864,7 @@ function updateComboInfo(){
   if(modalType==='combo'){const co=comboOdds(valid);el.innerHTML=`<span class="muted">Cote combinée</span> <b class="num">${fmt(co,2)}</b>`;}
   else{const k=+(document.getElementById('f_sysk')?.value||2);const n=valid.length;
     const nc=n>=k?combinations(valid,k).length:0;el.innerHTML=`<span class="muted">${nc} combinaison(s) · mise totale = mise × ${nc}</span>`;}
+  updateAdvise();
 }
 function setBetType(t){captureDraft();modalType=t;drawBetModal();}
 function pickStatus(s){modalStatus=s;document.querySelectorAll('#statusChips .chip').forEach(c=>c.classList.toggle('sel',c.dataset.s===s));
@@ -759,7 +876,7 @@ function togglePct(v){captureDraft();modalPctMode=v;drawBetModal();}
 // Accepte la virgule comme séparateur décimal (claviers iOS/FR)
 function pfr(v){return parseFloat(String(v??'').replace(',','.'));}
 function markErr(id,on){const e=document.getElementById(id);if(e)e.classList.toggle('err',!!on);}
-function saveBet(){
+function saveBet(keepOpen){
   const common={placedAt:val('f_date'),closingOdds:pfr(val('f_closing'))||null,
     category:val('f_cat').trim(),sport:val('f_sport').trim(),competition:val('f_comp').trim(),bookmaker:val('f_book').trim(),tipster:val('f_tip').trim(),
     note:val('f_note').trim(),isFreebet:chk('f_fb'),isLive:chk('f_live'),
@@ -786,7 +903,17 @@ function saveBet(){
   }
   if(editingBetId)Object.assign(DB.bets.find(b=>b.id===editingBetId),data);
   else DB.bets.push({id:uid(),bankrollId:DB.activeId,createdAt:Date.now(),...data});
-  save();renderAll();closeModal();toast(editingBetId?'Pari modifié':'Pari ajouté');
+  save();renderAll();
+  if(keepOpen&&!editingBetId){ // saisie en rafale : garde sport/compét/book, vide mise/cote
+    captureDraft();
+    Object.assign(modalDraft,{stake:'',odds:'',cat:'',note:'',closing:'',cashout:''});
+    modalStatus='pending';modalEW=false;modalEwStatus='win';
+    modalSelections=[{label:'',odds:'',status:'won'},{label:'',odds:'',status:'won'}];
+    drawBetModal();toast('Pari ajouté — au suivant !');
+    const st=document.getElementById('f_stake');if(st)st.focus();
+    return;
+  }
+  closeModal();toast(editingBetId?'Pari modifié':'Pari ajouté');
 }
 // Suppression avec annulation (undo) au lieu d'un confirm() bloquant
 let undoBuf=null,undoT=null;
@@ -805,7 +932,7 @@ function switchAnalyse(t){analyseTab=t;
   if(t==='analyzer')renderAnalyzer();if(t==='calendar')renderCalendar();if(t==='balance')renderBalance();}
 function renderAnalyzer(){
   const dims=[['category','Catégorie'],['sport','Sport'],['bookmaker','Bookmaker'],['tipster','Tipster'],['competition','Compétition'],
-    ['weekday','Jour'],['month','Mois'],['oddsBucket','Tranche cote'],['betType','Type']];
+    ['weekday','Jour'],['month','Mois'],['oddsBucket','Tranche cote'],['stakeBucket','Tranche mise'],['betType','Type']];
   (DB.customFields||[]).forEach(f=>dims.push(['cf:'+f,f]));
   const bets=activeBets().filter(isSettled);
   const groups={};
@@ -813,6 +940,7 @@ function renderAnalyzer(){
     if(analyzerDim==='weekday')key=['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'][new Date(b.placedAt).getDay()];
     else if(analyzerDim==='month')key=b.placedAt.slice(0,7);
     else if(analyzerDim==='oddsBucket'){const o=betOdds(b);key=o<1.5?'1.00–1.50':o<2?'1.50–2.00':o<3?'2.00–3.00':o<5?'3.00–5.00':'5.00+';}
+    else if(analyzerDim==='stakeBucket'){const s=betStake(b);key=s<5?'< 5':s<10?'5–10':s<20?'10–20':s<50?'20–50':'50+';}
     else if(analyzerDim==='betType')key={single:'Simple',combo:'Combiné',system:'Système',lay:'Lay'}[b.betType||'single'];
     else if(analyzerDim.startsWith('cf:'))key=(b.customFields||{})[analyzerDim.slice(3)]||'—';
     else key=b[analyzerDim]||'—';
@@ -840,10 +968,18 @@ function detailedStatsCard(bets){
   const now=new Date(),mk=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const monthP=bets.filter(b=>b.placedAt.slice(0,7)===mk).reduce((a,b)=>a+betProfit(b),0);
   const fb=bets.filter(b=>b.isFreebet).length;
+  // Variance : écart-type des ROI par pari + intervalle de confiance 95% sur le ROI réel
+  const rois=bets.filter(b=>betStake(b)>0).map(b=>betProfit(b)/betStake(b));
+  const rMean=rois.reduce((a,b)=>a+b,0)/Math.max(1,rois.length);
+  const sd=rois.length>1?Math.sqrt(rois.reduce((a,b)=>a+(b-rMean)**2,0)/(rois.length-1)):0;
+  const half=rois.length>1?1.96*sd/Math.sqrt(rois.length):0;
+  const ciLo=(rMean-half)*100,ciHi=(rMean+half)*100;
   const cells=[['Plus gros gain',signed(best)+cur(),'pos'],['Plus grosse perte',signed(worst)+cur(),'neg'],
     ['Série gagnante max',wmax,''],['Série perdante max',lmax,lmax>0?'neg':''],
     ['Cote moy. gagnés',fmt(avgW,2),''],['Cote moy. perdus',fmt(avgL,2),''],
-    ['Profit ce mois',signed(monthP)+cur(),monthP>=0?'pos':'neg'],['Freebets',fb,'']];
+    ['Profit ce mois',signed(monthP)+cur(),monthP>=0?'pos':'neg'],['Freebets',fb,''],
+    ['Écart-type / pari',fmt(sd*100,0)+'%',''],
+    ['ROI réel (IC 95%)',rois.length>5?`${fmt(ciLo,0)}% à ${fmt(ciHi,0)}%`:'—',ciLo>0?'pos':ciHi<0?'neg':'']];
   return `<div class="grid" style="margin-bottom:14px">${cells.map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v num ${c}" style="font-size:18px">${v}</div></div>`).join('')}</div>`;
 }
 function setDim(d){analyzerDim=d;renderAnalyzer();}
@@ -857,13 +993,31 @@ function renderCalendar(){
   for(let d=1;d<=days;d++){const key=`${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const p=byDay[key];const bg=p==null?'':p>=0?'rgba(46,230,166,.13)':'rgba(255,93,108,.13)';
     cells+=`<div class="day" style="${bg?`background:${bg};border-color:${p>=0?'rgba(46,230,166,.3)':'rgba(255,93,108,.3)'}`:''}">
-      <span class="d">${d}</span>${p!=null?`<span class="p ${p>=0?'pos':'neg'}">${signed(p)}</span>`:''}</div>`;}
+      <span class="d">${d}</span>${p!=null?`<span class="p ${p>=0?'pos':'neg'}">${signed(p,Math.abs(p)<10?1:0)}</span>`:''}</div>`;}
   document.getElementById('analyse-calendar').innerHTML=`
-    <div class="cal-nav"><button onclick="calNav(-1)">‹</button>
+    <div class="cal-nav"><button aria-label="Mois précédent" onclick="calNav(-1)">‹</button>
       <div style="text-align:center"><div style="text-transform:capitalize;font-weight:600">${monthName}</div>
       <div class="num ${monthProfit>=0?'pos':'neg'}" style="font-size:13px">${signed(monthProfit)}${cur()}</div></div>
-      <button onclick="calNav(1)">›</button></div>
-    <div class="cal">${['L','M','M','J','V','S','D'].map(d=>`<div class="dow">${d}</div>`).join('')}${cells}</div>`;
+      <button aria-label="Mois suivant" onclick="calNav(1)">›</button></div>
+    <div class="cal">${['L','M','M','J','V','S','D'].map(d=>`<div class="dow">${d}</div>`).join('')}${cells}
+    </div>${monthlyBars()}`;
+}
+// Barres de profit par mois (12 derniers mois avec activité)
+function monthlyBars(){
+  const bets=activeBets().filter(isSettled);
+  const by={};bets.forEach(b=>{const k=b.placedAt.slice(0,7);by[k]=(by[k]||0)+betProfit(b);});
+  const keys=Object.keys(by).sort().slice(-12);
+  if(keys.length<2)return '';
+  const mx=Math.max(...keys.map(k=>Math.abs(by[k])))||1;
+  const W=500,H=130,bw=W/keys.length,zero=H/2+4;
+  let s='';
+  keys.forEach((k,i)=>{const v=by[k],h=Math.abs(v)/mx*(H/2-22),y=v>=0?zero-h:zero;
+    s+=`<rect x="${(i*bw+3).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw-6).toFixed(1)}" height="${Math.max(1.5,h).toFixed(1)}" rx="2" fill="var(--${v>=0?'pos':'neg'})" opacity=".85"/>
+      <text x="${(i*bw+bw/2).toFixed(1)}" y="${H-2}" text-anchor="middle" font-size="9" fill="var(--muted)">${k.slice(5)}/${k.slice(2,4)}</text>
+      <text x="${(i*bw+bw/2).toFixed(1)}" y="${(v>=0?y-4:y+h+11).toFixed(1)}" text-anchor="middle" font-size="9" font-family="var(--mono)" fill="var(--${v>=0?'pos':'neg'})">${signed(v,0)}</text>`;});
+  return `<h2 class="section">Profit par mois</h2>
+    <div class="tool" style="padding:12px 8px"><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
+    <line x1="0" y1="${zero}" x2="${W}" y2="${zero}" stroke="var(--border)"/>${s}</svg></div>`;
 }
 function calNav(d){calMonth+=d;if(calMonth<0){calMonth=11;calYear--;}if(calMonth>11){calMonth=0;calYear++;}renderCalendar();}
 function renderBalance(){
@@ -879,7 +1033,26 @@ function renderBalance(){
     <div class="tool"><div class="desc">Cochez les bankrolls à agréger</div>
       <div class="sel-list">${DB.bankrolls.map(b=>`<label><input type="checkbox" ${balanceSel.includes(b.id)?'checked':''} onchange="toggleBalance('${b.id}')"> ${esc(b.name)}</label>`).join('')}</div></div>
     <div class="hero"><div class="chart">${svgChart(equitySeries(selBets,start,selTxs))}</div></div>
-    <div class="grid">${cells.map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v num ${c}">${v}</div></div>`).join('')}</div>`;
+    <div class="grid">${cells.map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v num ${c}">${v}</div></div>`).join('')}</div>
+    ${balanceCompare()}`;
+}
+// Comparaison : une courbe par bankroll sélectionnée
+function balanceCompare(){
+  const sel=DB.bankrolls.filter(b=>balanceSel.includes(b.id));
+  if(sel.length<2)return '';
+  const colors=['var(--accent)','var(--pos)','var(--neg)','#9fb0cc','#c792ea','#7aa2f7'];
+  const series=sel.map((b,i)=>({name:b.name,color:colors[i%colors.length],
+    pts:equitySeries(DB.bets.filter(x=>x.bankrollId===b.id),+b.startingCapital,
+      (DB.transactions||[]).filter(t=>t.bankrollId===b.id))})).filter(s=>s.pts.length>1);
+  if(series.length<2)return '';
+  const all=series.flatMap(s=>s.pts),min=Math.min(...all),max=Math.max(...all),rng=(max-min)||1;
+  const W=500,H=140,pad=8;
+  const paths=series.map(s=>{const n=s.pts.length;
+    const X=i=>pad+i*(W-2*pad)/(n-1),Y=v=>H-pad-(v-min)/rng*(H-2*pad);
+    return `<path d="${s.pts.map((v,i)=>`${i?'L':'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>`;}).join('');
+  return `<h2 class="section">Comparaison</h2>
+    <div class="hero"><div class="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${paths}</svg></div>
+    <div class="chips" style="margin-top:10px">${series.map(s=>`<div class="chip small" style="border-color:${s.color};color:${s.color}">${esc(s.name)}</div>`).join('')}</div></div>`;
 }
 function toggleBalance(id){balanceSel=balanceSel.includes(id)?balanceSel.filter(x=>x!==id):[...balanceSel,id];renderBalance();}
 
@@ -895,7 +1068,7 @@ function switchTool(t){toolTab=t;
 function renderOptim(){
   document.getElementById('tool-optim').innerHTML=`
   <div class="tool"><h4>Optimizer — simulation Monte Carlo</h4>
-    <div class="desc">Teste une stratégie de mise sur des milliers de scénarios. Source : aléatoire ou ton historique.</div>
+    <div class="desc">Teste une stratégie de mise sur des milliers de scénarios. Source « Mon historique » : tirage aléatoire avec remise dans tes paris réglés (bootstrap).</div>
     <label>Source</label><div class="chips"><div class="chip sel" id="src_rand" onclick="optSrc('random')">Aléatoire</div><div class="chip" id="src_hist" onclick="optSrc('historical')">Mon historique</div></div>
     <div id="randParams">
       <div class="field-row"><div><label>Nb paris</label><input class="num" id="o_n" type="number" inputmode="decimal" value="100"></div>
@@ -931,25 +1104,30 @@ function optStratLbl(){const s=val('o_strat');document.getElementById('o_plbl').
 function optPreset(s){const sel=document.getElementById('o_strat');sel.value=s;
   document.getElementById('o_param').value=s==='kelly'?'0.25':s==='martingale'?'1':'2';optStratLbl();toast('Stratégie : '+s);}
 function runOptim(){
-  const strat=val('o_strat'),startBank=+val('o_bank'),param=+val('o_param'),nSims=Math.min(20000,+val('o_sims'));
+  const strat=val('o_strat'),startBank=+val('o_bank'),param=+val('o_param'),nSims=Math.max(100,Math.min(20000,+val('o_sims')||2000));
+  if(!(startBank>0)||!(param>0)){toast('Capital et paramètre requis');return;}
   let seq=null,wr,odds,nBets;
-  if(optSource==='historical'){const s=activeBets().filter(isSettled&&(b=>betOdds(b)>0&&b.betType!=='system'));
-    seq=activeBets().filter(b=>isSettled(b)&&betOdds(b)>0&&b.betType!=='lay').map(b=>({odds:betOdds(b),win:isWin(b)}));
-    if(seq.length<5){toast('Pas assez d historique (≥5 paris à cote simple)');return;}nBets=seq.length;}
-  else{nBets=+val('o_n');wr=+val('o_wr')/100;odds=+val('o_odds');}
+  if(optSource==='historical'){
+    seq=activeBets().filter(b=>isSettled(b)&&betOdds(b)>0&&b.betType!=='lay'&&b.betType!=='system').map(b=>({odds:betOdds(b),win:isWin(b)}));
+    if(seq.length<5){toast('Pas assez d\'historique (≥ 5 paris réglés à cote simple)');return;}nBets=seq.length;}
+  else{nBets=+val('o_n');wr=+val('o_wr')/100;odds=+val('o_odds');
+    if(!(nBets>0)||!(wr>=0&&wr<=1)||!(odds>1)){toast('Paramètres invalides');return;}}
   const finals=[],mdds=[];let ruin=0;
   const fibMult=[1,1,2,3,5,8,13,21,34,55,89,144];
+  const pHist=seq?wrEstimate(seq):0;
   for(let s=0;s<nSims;s++){let bank=startBank,peak=bank,mdd=0,base=startBank*param/100,unit=base;
     let dLevel=1,fibIdx=0,pWins=0;
-    const events=seq||Array.from({length:nBets},()=>({odds,win:Math.random()<wr}));
+    // Historique : bootstrap (tirage avec remise) pour que chaque simulation soit différente
+    const events=seq?Array.from({length:nBets},()=>seq[Math.floor(Math.random()*seq.length)])
+      :Array.from({length:nBets},()=>({odds,win:Math.random()<wr}));
     for(const ev of events){let stake;
       if(strat==='flat')stake=startBank*param/100;
       else if(strat==='pct')stake=bank*param/100;
-      else if(strat==='kelly'){const p=seq?wrEstimate(seq):wr;const f=Math.max(0,(p*ev.odds-1)/(ev.odds-1));stake=bank*f*param;}
+      else if(strat==='kelly'){const p=seq?pHist:wr;const f=Math.max(0,(p*ev.odds-1)/(ev.odds-1));stake=bank*f*param;}
       else if(strat==='dalembert')stake=base*dLevel;
       else if(strat==='fibonacci')stake=base*fibMult[Math.min(fibIdx,fibMult.length-1)];
       else stake=unit;
-      if(stake>bank)stake=bank;if(bank<=0.01){ruin++;break;}
+      if(stake>bank)stake=bank;if(bank<=startBank*0.01){ruin++;break;}
       if(ev.win){bank+=stake*(ev.odds-1);
         if(strat==='martingale')unit=base;
         else if(strat==='dalembert')dLevel=Math.max(1,dLevel-1);
@@ -967,7 +1145,7 @@ function runOptim(){
   const median=pc(.5),p5=pc(.05),p95=pc(.95),mean=finals.reduce((a,b)=>a+b,0)/finals.length;
   const avgMdd=mdds.reduce((a,b)=>a+b,0)/mdds.length;
   document.getElementById('o_out').innerHTML=`
-    <div class="big ${median>=startBank?'pos':'neg'}">${fmt(median)}${cur()} <span style="font-size:13px;font-weight:400" class="muted">capital médian</span></div>
+    <div class="big ${median>=startBank?'pos':'neg'}">${fmt(median)}${cur()} <span style="font-size:13px;font-weight:400" class="muted">capital médian (${signed((median/startBank-1)*100,0)}%)</span></div>
     <table class="an" style="margin-top:10px"><tbody>
       <tr><td>Capital moyen</td><td class="${mean>=startBank?'pos':'neg'}">${fmt(mean)}${cur()}</td></tr>
       <tr><td>Pire 5% (P5)</td><td class="neg">${fmt(p5)}${cur()}</td></tr>
@@ -1160,6 +1338,7 @@ function openBankrollModal(id){editingBkId=id||null;const b=id?DB.bankrolls.find
     <label>Nom</label><input id="bk_name" value="${b?esc(b.name):''}" placeholder="Ma bankroll">
     <div class="field-row"><div><label>Capital de départ</label><input class="num" id="bk_cap" type="number" inputmode="decimal" value="${b?b.startingCapital:100}"></div>
       <div><label>Devise</label><select id="bk_cur">${CURRENCIES.map(([s,l])=>`<option value="${s}" ${(b?b.currency:'€')===s?'selected':''}>${l}</option>`).join('')}</select></div></div>
+    <label>Objectif de capital (optionnel)</label><input class="num" id="bk_goal" type="number" inputmode="decimal" value="${b&&b.goal?b.goal:''}" placeholder="ex : 500 — barre de progression sur le tableau de bord">
     <label>Affichage des cotes</label><div class="chips" id="bk_fmt">${[['decimal','Décimale'],['american','Américaine'],['fractional','Fractionnaire']].map(([v,l])=>`<div class="chip ${bkFmt===v?'sel':''}" data-f="${v}" onclick="pickOddsFmt('${v}')">${l}</div>`).join('')}</div>
     <div class="btn-row"><button class="btn primary" onclick="saveBankroll()">${id?'Enregistrer':'Créer'}</button></div>
     ${id?`<div class="btn-row"><button class="btn ghost" onclick="duplicateBankroll('${id}')">Dupliquer</button>
@@ -1168,7 +1347,7 @@ function openBankrollModal(id){editingBkId=id||null;const b=id?DB.bankrolls.find
     ${id&&DB.bankrolls.length>1?`<button class="btn danger" style="margin-top:10px" onclick="deleteBankroll('${id}')">Supprimer (et ses paris)</button>`:''}
     <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Annuler</button>`;openModal();}
 function saveBankroll(){const name=val('bk_name').trim()||'Bankroll',cap=+val('bk_cap')||0,c=val('bk_cur')||'€';
-  const upd={name,startingCapital:cap,currency:c,oddsFormat:bkFmt};
+  const upd={name,startingCapital:cap,currency:c,oddsFormat:bkFmt,goal:pfr(val('bk_goal'))||null};
   if(editingBkId)Object.assign(DB.bankrolls.find(b=>b.id===editingBkId),upd);
   else{const id=uid();DB.bankrolls.push({id,...upd,archived:false});DB.activeId=id;}
   save();renderAll();closeModal();toast('Bankroll enregistrée');}
@@ -1377,6 +1556,27 @@ new MutationObserver(()=>{
   h.addEventListener('touchend',e=>{if(y0==null)return;const dy=Math.max(0,e.changedTouches[0].clientY-y0);
     box.style.transition='';box.style.transform='';y0=null;if(dy>80)closeModal();});
 })();
+// Scrub sur la courbe : glisser le doigt affiche la date et le capital au point
+(function(){
+  const c=document.getElementById('chart');if(!c)return;
+  function show(clientX){
+    const d=window.chartD;if(!d||d.pts.length<2)return;
+    const r=c.getBoundingClientRect();
+    let i=Math.round((clientX-r.left)/r.width*(d.pts.length-1));
+    i=Math.max(0,Math.min(d.pts.length-1,i));
+    const tip=document.getElementById('chartTip'),cu=document.getElementById('chartCursor');
+    if(tip)tip.textContent=(d.dts[i]?fmtDate(d.dts[i])+' · ':'Départ · ')+fmt(d.pts[i])+cur();
+    if(cu){cu.style.left=(i/(d.pts.length-1)*100)+'%';cu.style.display='block';}
+  }
+  function hide(){setTimeout(()=>{
+    const tip=document.getElementById('chartTip'),cu=document.getElementById('chartCursor');
+    if(tip)tip.textContent='';if(cu)cu.style.display='none';},1200);}
+  c.addEventListener('pointerdown',e=>show(e.clientX));
+  c.addEventListener('pointermove',e=>{if(e.buttons)show(e.clientX);});
+  c.addEventListener('touchstart',e=>show(e.touches[0].clientX),{passive:true});
+  c.addEventListener('touchmove',e=>{show(e.touches[0].clientX);e.preventDefault();},{passive:false});
+  c.addEventListener('pointerup',hide);c.addEventListener('touchend',hide);c.addEventListener('pointerleave',hide);
+})();
 let toastT;
 function toast(m){toastAction(m);}
 function toastAction(m,label,cb){const t=document.getElementById('toast');
@@ -1392,6 +1592,13 @@ function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
 renderAll();
+updateBadge();
+// Raccourci d'app « Nouveau pari » (appui long sur l'icône)
+if(new URLSearchParams(location.search).get('action')==='new'){
+  if(isTotalActive()&&visibleBankrolls()[0]){DB.activeId=visibleBankrolls()[0].id;save();renderAll();}
+  history.replaceState({v:'dash'},'',location.pathname);
+  setTimeout(()=>{openBetModal();toast('Bankroll : '+(activeBankroll()?.name||''));},80);
+}
 // Demande au navigateur de ne jamais effacer les données locales (anti-purge iOS)
 if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(()=>{});}
 // Synchro cloud au démarrage (si configurée) : récupère la dernière version
