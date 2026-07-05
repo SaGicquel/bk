@@ -1594,12 +1594,20 @@ function fileToJpeg(f,max=1400){return new Promise((res,rej)=>{
   img.onerror=rej;img.src=url;});}
 const AI_PROMPT=`Tu extrais des paris sportifs depuis des captures d'écran d'applications de paris (Winamax, Betclic, Unibet, etc.).
 Retourne un tableau JSON, un élément par pari visible (même partiellement).
-Champs : match (les équipes/joueurs, ex "Tukums 2000/TSS - Super Nova"), selection (le pari joué, ex "+ de 3,5 buts" ou "Une des 2 équipes marque un pénalty"),
-odds (cote décimale en nombre), stake (mise en nombre, sans le symbole €), status ("won" si Gagné, "lost" si Perdu ou gains 0,00 alors que réglé, "pending" si En cours, "void" si Remboursé/Annulé),
-date (au format YYYY-MM-DD si visible, sinon ""), sport (ex "Football"), competition (ligue/tournoi si identifiable, sinon ""), bookmaker (si identifiable au design ou logo, sinon "").
-Attention : "Gains 7,00 €" est le retour total, pas la mise. Ne confonds pas cote et score.`;
+Champs :
+- match : les équipes ou joueurs, ex "Brésil - Norvège".
+- selection : le TYPE de marché uniquement, court et générique, ex "Score exact", "Buteur", "Plus/Moins 2.5 buts", "1N2 (Résultat)", "Double chance", "Les deux équipes marquent (BTTS)". Ne recopie PAS le détail (pas la liste des scores, pas le nom du buteur).
+- detail : le détail précis de la sélection, ex "Yago Cariello" pour un buteur, ou la liste des scores pour un score exact. "" si rien.
+- odds : cote décimale en nombre.
+- stake : mise en nombre, sans le symbole €.
+- status : "won" si Gagné, "lost" si Perdu ou gains 0,00 alors que le pari est réglé, "pending" si En cours / gains potentiels affichés, "void" si Remboursé/Annulé.
+- date : YYYY-MM-DD si visible, sinon "".
+- sport : ex "Football".
+- competition : DÉDUIS-LA de ta connaissance des équipes, elle n'est presque jamais affichée. Équipes nationales (Brésil, Norvège...) → compétition internationale plausible à la date donnée (ex "Coupe du Monde", "Ligue des Nations"). Clubs → championnat national du pays (ex Gwangju FC / Ulsan HD FC → "K League 1", Marseille / Lyon → "Ligue 1"). IMPORTANT : les libellés du bookmaker comme "Penalty World", "MyMatch", "Défi", "Boost" sont des fonctionnalités marketing, JAMAIS des compétitions — ne les utilise pas. Si vraiment indéterminable : "".
+- bookmaker : si identifiable au design/logo, sinon "".
+Attention : "Gains 7,00 €" est le retour total, pas la mise. "Gains potentiels" = pari en cours. Ne confonds pas cote, score et heure du match.`;
 const AI_SCHEMA={type:'ARRAY',items:{type:'OBJECT',properties:{
-  match:{type:'STRING'},selection:{type:'STRING'},odds:{type:'NUMBER'},stake:{type:'NUMBER'},
+  match:{type:'STRING'},selection:{type:'STRING'},detail:{type:'STRING'},odds:{type:'NUMBER'},stake:{type:'NUMBER'},
   status:{type:'STRING',enum:['won','lost','pending','void']},date:{type:'STRING'},
   sport:{type:'STRING'},competition:{type:'STRING'},bookmaker:{type:'STRING'}},
   required:['odds','stake','status']}};
@@ -1643,7 +1651,8 @@ function drawAiPreview(){
         <span class="badge ${badge}">${{won:'Gagné',lost:'Perdu',pending:'En cours',void:'Annulé'}[b.status]||'?'}</span></div>
       <div class="grid2">
         <div><label>Match</label><input data-ai="${i}" data-f="match" value="${esc(b.match||'')}"></div>
-        <div><label>Sélection (marché)</label><input data-ai="${i}" data-f="selection" value="${esc(b.selection||'')}"></div>
+        <div><label>Marché</label><input data-ai="${i}" data-f="selection" value="${esc(b.selection||'')}"></div>
+        <div style="grid-column:1/-1"><label>Détail (buteur, scores…)</label><input data-ai="${i}" data-f="detail" value="${esc(b.detail||'')}"></div>
         <div><label>Cote</label><input class="num" data-ai="${i}" data-f="odds" type="text" inputmode="decimal" value="${b.odds||''}"></div>
         <div><label>Mise (${cur()})</label><input class="num" data-ai="${i}" data-f="stake" type="text" inputmode="decimal" value="${b.stake||''}"></div>
         <div><label>Statut</label><select data-ai="${i}" data-f="status">${sts.map(([v,l])=>`<option value="${v}" ${b.status===v?'selected':''}>${l}</option>`).join('')}</select></div>
@@ -1669,7 +1678,7 @@ function importAiBets(){
       stake:stake||0,odds:odds||1,status:g(i,'status')||'pending',
       placedAt:g(i,'date')||new Date().toISOString().slice(0,10),
       sport:g(i,'sport'),competition:g(i,'competition'),bookmaker:(aiParsed[i].bookmaker||'').trim(),
-      category:g(i,'selection'),tipster:'',note:g(i,'match'),
+      category:g(i,'selection'),tipster:'',note:[g(i,'match'),g(i,'detail')].filter(Boolean).join(' — '),
       isFreebet:false,isLive:false,closingOdds:null,customFields:{}});
     added++;
   });
@@ -1752,7 +1761,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v7 — Scan IA';
+const APP_VER='v8 — Scan IA ameliore';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
