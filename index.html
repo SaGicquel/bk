@@ -157,7 +157,10 @@ table.an td:first-child{font-family:var(--sans)}
 .qbtn.w{color:var(--pos);border-color:rgba(46,230,166,.35)}
 .qbtn.l{color:var(--neg);border-color:rgba(255,93,108,.35)}
 .dgroup{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:16px 2px 8px;font-weight:600}
-.searchbar{margin-bottom:10px}
+.searchbar{margin-bottom:10px;display:flex;gap:8px}
+.searchbar input{flex:1;min-width:0}
+.scanbtn{background:var(--accent);color:#1a1205;border:none;border-radius:10px;padding:0 14px;
+  font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sans);white-space:nowrap;flex-shrink:0}
 .fbadge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;border-radius:8px;
   background:var(--accent);color:#1a1205;font-size:10px;font-weight:700;margin-left:5px;padding:0 4px}
 details.adv{margin-top:14px;border:1px solid var(--border);border-radius:12px;padding:0 12px}
@@ -296,6 +299,7 @@ create policy "bk_all" on bk_sync
       <p class="muted" style="font-size:12px;margin-top:18px">
         Outil de suivi personnel. Aucun argent réel. Les données sont stockées localement sur cet appareil et,
         si la synchro cloud est activée, sauvegardées en ligne. Pensez à exporter de temps en temps.</p>
+      <p class="muted num" style="font-size:11px" id="appVer"></p>
     </section>
   </main>
 </div>
@@ -592,10 +596,10 @@ function renderBets(){
     <button class="${filters.status==='lost'?'active':''}" onclick="setFilter('status','lost')">Perdus</button>
     <button class="${filters.status==='pending'?'active':''}" onclick="setFilter('status','pending')">En cours</button>
     <button class="${nAdv?'active':''}" onclick="openFilterModal()">Filtres${nAdv?`<span class="fbadge">${nAdv}</span>`:''}</button>
-    <button onclick="openAiScan()">Scan IA</button>
     <button class="${selectMode?'active':''}" onclick="toggleSelectMode()">${selectMode?'Annuler':'Sélection'}</button>`;
   document.getElementById('filterPanel').innerHTML=`<div class="searchbar">
-    <input id="betSearch" type="search" placeholder="Rechercher (équipe, note, tipster…)" autocomplete="off" value="${esc(filters.q)}" oninput="setSearch(this.value)"></div>`;
+    <input id="betSearch" type="search" placeholder="Rechercher (équipe, note…)" autocomplete="off" value="${esc(filters.q)}" oninput="setSearch(this.value)">
+    <button class="scanbtn" onclick="openAiScan()">✨ Scan IA</button></div>`;
   renderBetsList();
 }
 function setSearch(q){filters.q=q;betsShown=100;renderBetsList();}
@@ -1748,6 +1752,8 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
+const APP_VER='v7 — Scan IA';
+{const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
 // Raccourci d'app « Nouveau pari » (appui long sur l'icône)
