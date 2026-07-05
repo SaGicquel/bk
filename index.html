@@ -176,6 +176,21 @@ input.err,select.err{border-color:var(--neg)}
 .guide li{margin-bottom:6px}
 .guide code{background:var(--surface2);border-radius:4px;padding:1px 4px;font-family:var(--mono);font-size:11px}
 .guide pre{background:var(--surface2);border-radius:8px;padding:8px;overflow-x:auto;font-size:10px;line-height:1.5;font-family:var(--mono)}
+.aidrop{border:2px dashed var(--border);border-radius:16px;padding:32px 16px;text-align:center;cursor:pointer;transition:border-color .25s}
+.aidrop:active{border-color:var(--accent)}
+.aidrop .lbl{font-size:15px;font-weight:500}
+.aidrop .sub{font-size:11px;color:var(--muted);margin-top:4px}
+.aithumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.aithumbs img{width:56px;height:56px;border-radius:10px;object-fit:cover;border:1px solid var(--border)}
+.aispin{text-align:center;padding:20px;color:var(--accent);font-size:14px;font-weight:600;animation:aipulse 1.3s ease-in-out infinite}
+@keyframes aipulse{0%,100%{opacity:.5}50%{opacity:1}}
+.aicard{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px}
+.aicard .aihead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.aicard .aihead input[type="checkbox"]{width:auto;accent-color:var(--accent)}
+.aicard .aihead .ttl{flex:1;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aicard .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
+.aicard label{margin:0 0 3px;font-size:10px}
+.aicard input,.aicard select{padding:8px 9px;font-size:13px;border-radius:8px}
 </style>
 </head>
 <body>
@@ -577,6 +592,7 @@ function renderBets(){
     <button class="${filters.status==='lost'?'active':''}" onclick="setFilter('status','lost')">Perdus</button>
     <button class="${filters.status==='pending'?'active':''}" onclick="setFilter('status','pending')">En cours</button>
     <button class="${nAdv?'active':''}" onclick="openFilterModal()">Filtres${nAdv?`<span class="fbadge">${nAdv}</span>`:''}</button>
+    <button onclick="openAiScan()">Scan IA</button>
     <button class="${selectMode?'active':''}" onclick="toggleSelectMode()">${selectMode?'Annuler':'Sélection'}</button>`;
   document.getElementById('filterPanel').innerHTML=`<div class="searchbar">
     <input id="betSearch" type="search" placeholder="Rechercher (équipe, note, tipster…)" autocomplete="off" value="${esc(filters.q)}" oninput="setSearch(this.value)"></div>`;
@@ -1516,6 +1532,147 @@ function autoCloudBackup(){
   if(Date.now()-last>6*3600*1000)cloudSyncNow(true);
 }
 setInterval(autoCloudBackup,30*60*1000);
+
+/* ===================== SCAN IA (Gemini — gratuit via Google AI Studio) ===================== */
+const GKEY='bk_gemini_key';
+const GMODEL='gemini-2.5-flash';
+function gemKey(){return localStorage.getItem(GKEY)||'';}
+let aiFiles=[],aiParsed=[];
+function openAiScan(){
+  if(isTotalActive()){toast('Choisis une bankroll précise avant d\'importer');return;}
+  aiFiles=[];aiParsed=[];
+  drawAiScan();openModal();
+}
+function drawAiScan(){
+  const key=gemKey();
+  let h=`<h3>Scan IA</h3>`;
+  if(!key){
+    h+=`<div class="muted" style="font-size:13px;line-height:1.6;margin-bottom:10px">
+      Envoie une capture de tes paris (Winamax, Betclic…) et l'IA remplit tout : match, mise, cote, statut, ligue.<br>
+      Il te faut une clé gratuite (2 min, sans carte bancaire) :</div>
+      <ol class="muted" style="font-size:12px;margin:0 0 10px 18px;padding:0;line-height:1.8">
+        <li>Va sur <b>aistudio.google.com/apikey</b></li>
+        <li>Connecte ton compte Google → « Créer une clé API »</li>
+        <li>Colle-la ici :</li></ol>
+      <input id="gk_key" placeholder="AIza..." autocapitalize="off" autocomplete="off" spellcheck="false">
+      <div class="btn-row"><button class="btn primary" onclick="saveGemKey()">Enregistrer la clé</button></div>`;
+  }else{
+    h+=`<div class="aidrop" onclick="document.getElementById('aiInput').click()">
+        <div class="lbl">Ajouter des captures d'écran</div>
+        <div class="sub">jusqu'à 5 images · l'IA lit tout automatiquement</div></div>
+      <input type="file" id="aiInput" accept="image/*" multiple style="display:none" onchange="aiAddFiles(this.files)">
+      <div class="aithumbs" id="aiThumbs"></div>
+      <div id="aiActions"></div>
+      <div class="muted" style="font-size:11px;margin-top:10px">Modèle ${GMODEL} · palier gratuit Google AI Studio ·
+        <span style="text-decoration:underline;cursor:pointer" onclick="localStorage.removeItem(GKEY);drawAiScan()">changer de clé</span></div>`;
+  }
+  h+=`<button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Fermer</button>`;
+  document.getElementById('modalContent').innerHTML=h;
+}
+function saveGemKey(){
+  const k=(val('gk_key')||'').trim();
+  if(k.length<20){markErr('gk_key',1);toast('Clé invalide — elle commence par AIza');return;}
+  localStorage.setItem(GKEY,k);toast('Clé enregistrée');drawAiScan();
+}
+function aiAddFiles(list){
+  aiFiles=[...list].filter(f=>f.type.startsWith('image/')).slice(0,5);
+  const t=document.getElementById('aiThumbs');t.innerHTML='';
+  aiFiles.forEach(f=>{const img=document.createElement('img');img.src=URL.createObjectURL(f);t.appendChild(img);});
+  document.getElementById('aiActions').innerHTML=aiFiles.length
+    ?`<button class="btn primary" style="margin-top:12px" onclick="runAiScan()">Analyser ${aiFiles.length} image${aiFiles.length>1?'s':''}</button>`:'';
+}
+function fileToJpeg(f,max=1400){return new Promise((res,rej)=>{
+  const img=new Image(),url=URL.createObjectURL(f);
+  img.onload=()=>{const sc=Math.min(1,max/Math.max(img.width,img.height));
+    const cv=document.createElement('canvas');cv.width=Math.round(img.width*sc);cv.height=Math.round(img.height*sc);
+    cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);URL.revokeObjectURL(url);
+    res(cv.toDataURL('image/jpeg',0.85).split(',')[1]);};
+  img.onerror=rej;img.src=url;});}
+const AI_PROMPT=`Tu extrais des paris sportifs depuis des captures d'écran d'applications de paris (Winamax, Betclic, Unibet, etc.).
+Retourne un tableau JSON, un élément par pari visible (même partiellement).
+Champs : match (les équipes/joueurs, ex "Tukums 2000/TSS - Super Nova"), selection (le pari joué, ex "+ de 3,5 buts" ou "Une des 2 équipes marque un pénalty"),
+odds (cote décimale en nombre), stake (mise en nombre, sans le symbole €), status ("won" si Gagné, "lost" si Perdu ou gains 0,00 alors que réglé, "pending" si En cours, "void" si Remboursé/Annulé),
+date (au format YYYY-MM-DD si visible, sinon ""), sport (ex "Football"), competition (ligue/tournoi si identifiable, sinon ""), bookmaker (si identifiable au design ou logo, sinon "").
+Attention : "Gains 7,00 €" est le retour total, pas la mise. Ne confonds pas cote et score.`;
+const AI_SCHEMA={type:'ARRAY',items:{type:'OBJECT',properties:{
+  match:{type:'STRING'},selection:{type:'STRING'},odds:{type:'NUMBER'},stake:{type:'NUMBER'},
+  status:{type:'STRING',enum:['won','lost','pending','void']},date:{type:'STRING'},
+  sport:{type:'STRING'},competition:{type:'STRING'},bookmaker:{type:'STRING'}},
+  required:['odds','stake','status']}};
+async function runAiScan(){
+  if(!aiFiles.length)return;
+  document.getElementById('aiActions').innerHTML=`<div class="aispin">Analyse en cours…</div>`;
+  try{
+    const parts=[{text:AI_PROMPT}];
+    for(const f of aiFiles)parts.push({inline_data:{mime_type:'image/jpeg',data:await fileToJpeg(f)}});
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GMODEL}:generateContent?key=${encodeURIComponent(gemKey())}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({contents:[{parts}],generationConfig:{response_mime_type:'application/json',response_schema:AI_SCHEMA,temperature:0}})});
+    if(!r.ok){
+      if(r.status===400||r.status===403)throw new Error('Clé API invalide ou expirée — vérifie-la sur aistudio.google.com');
+      if(r.status===429)throw new Error('Quota gratuit atteint — réessaie dans une minute');
+      throw new Error('Erreur Gemini HTTP '+r.status);
+    }
+    const j=await r.json();
+    const txt=(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('');
+    aiParsed=JSON.parse(txt||'[]').filter(b=>+b.odds>0||+b.stake>0);
+    if(!aiParsed.length){document.getElementById('aiActions').innerHTML=
+      `<div class="empty">Aucun pari détecté. Essaie une capture plus complète.</div>
+       <button class="btn" onclick="drawAiScan()">Réessayer</button>`;return;}
+    drawAiPreview();
+  }catch(e){
+    document.getElementById('aiActions').innerHTML=
+      `<div class="empty" style="padding:16px">${esc(e.message)}</div>
+       <button class="btn" onclick="drawAiScan()">Réessayer</button>`;
+  }
+}
+function drawAiPreview(){
+  const sts=[['won','Gagné'],['lost','Perdu'],['pending','En cours'],['void','Annulé/Remb.']];
+  const today=new Date().toISOString().slice(0,10);
+  let h=`<h3>Vérifie avant d'importer</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">${aiParsed.length} pari${aiParsed.length>1?'s':''} détecté${aiParsed.length>1?'s':''} — corrige si besoin.</div>`;
+  aiParsed.forEach((b,i)=>{
+    const badge=b.status==='won'?'b-won':b.status==='lost'?'b-lost':b.status==='void'?'b-void':'b-pending';
+    h+=`<div class="aicard">
+      <div class="aihead"><input type="checkbox" checked data-ai-ck="${i}">
+        <span class="ttl">${esc(b.match||b.selection||'Pari '+(i+1))}</span>
+        <span class="badge ${badge}">${{won:'Gagné',lost:'Perdu',pending:'En cours',void:'Annulé'}[b.status]||'?'}</span></div>
+      <div class="grid2">
+        <div><label>Match</label><input data-ai="${i}" data-f="match" value="${esc(b.match||'')}"></div>
+        <div><label>Sélection (marché)</label><input data-ai="${i}" data-f="selection" value="${esc(b.selection||'')}"></div>
+        <div><label>Cote</label><input class="num" data-ai="${i}" data-f="odds" type="text" inputmode="decimal" value="${b.odds||''}"></div>
+        <div><label>Mise (${cur()})</label><input class="num" data-ai="${i}" data-f="stake" type="text" inputmode="decimal" value="${b.stake||''}"></div>
+        <div><label>Statut</label><select data-ai="${i}" data-f="status">${sts.map(([v,l])=>`<option value="${v}" ${b.status===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div><label>Date</label><input data-ai="${i}" data-f="date" type="date" value="${/^\d{4}-\d{2}-\d{2}$/.test(b.date||'')?b.date:today}"></div>
+        <div><label>Sport</label><input data-ai="${i}" data-f="sport" value="${esc(b.sport||'')}"></div>
+        <div><label>Compétition</label><input data-ai="${i}" data-f="competition" value="${esc(b.competition||'')}"></div>
+      </div></div>`;
+  });
+  h+=`<div class="btn-row"><button class="btn primary" onclick="importAiBets()">Importer les paris cochés</button></div>
+    <button class="btn ghost" style="margin-top:8px" onclick="drawAiScan()">Rescanner</button>
+    <button class="btn ghost" style="margin-top:8px" onclick="closeModal()">Annuler</button>`;
+  document.getElementById('modalContent').innerHTML=h;
+}
+function importAiBets(){
+  let added=0;
+  const g=(i,f)=>{const el=document.querySelector(`[data-ai="${i}"][data-f="${f}"]`);return el?el.value:'';};
+  aiParsed.forEach((b,i)=>{
+    const ck=document.querySelector(`[data-ai-ck="${i}"]`);
+    if(!ck||!ck.checked)return;
+    const stake=pfr(g(i,'stake')),odds=pfr(g(i,'odds'));
+    if(!(stake>0)&&!(odds>0))return;
+    DB.bets.push({id:uid(),bankrollId:DB.activeId,createdAt:Date.now(),betType:'single',
+      stake:stake||0,odds:odds||1,status:g(i,'status')||'pending',
+      placedAt:g(i,'date')||new Date().toISOString().slice(0,10),
+      sport:g(i,'sport'),competition:g(i,'competition'),bookmaker:(aiParsed[i].bookmaker||'').trim(),
+      category:g(i,'selection'),tipster:'',note:g(i,'match'),
+      isFreebet:false,isLive:false,closingOdds:null,customFields:{}});
+    added++;
+  });
+  if(!added){toast('Aucun pari à importer');return;}
+  save();renderAll();closeModal();
+  toast(added+' pari'+(added>1?'s':'')+' importé'+(added>1?'s':'')+' ✓');
+}
 
 /* ===================== PLUMBING ===================== */
 function switchView(v,fromPop){document.querySelectorAll('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+v));
