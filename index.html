@@ -716,23 +716,37 @@ function sugChips(inputId,values){
     `<div class="chip small" onclick="setInput('${inputId}',this.textContent)">${esc(v)}</div>`).join('')}</div>`;
 }
 function setInput(id,v){const e=document.getElementById(id);if(e){e.value=v;e.classList.remove('err');if(id==='f_sport')refreshCatList();}}
-/* --- Mise conseillée : ¼ Kelly sur proba estimée depuis l'historique (lissage bayésien vers la proba implicite) --- */
+/* --- Mise conseillée v2 ---
+   Principe : un taux de réussite n'est valable qu'à cotes COMPARABLES.
+   1) Base "gestion de bankroll" (toujours valable) : viser +2% du capital en cas de gain
+      → mise = 2% × capital / (cote − 1), plafonnée à 5% du capital.
+      La mise DIMINUE quand la cote monte (cote 2 → 2%, cote 5 → 0,5%, cote 20 → ~0,1%).
+   2) Edge : uniquement si ≥ 10 paris réglés à cotes similaires (±30%). Proba estimée avec fort
+      lissage bayésien vers la proba implicite + plafond anti petits échantillons, puis ¼ Kelly.
+   3) La reco finale est bornée : jamais > 5% du capital, jamais > 2,5× la base sécurité. */
 function adviseStake(odds){
-  const capital=currentCapital();if(!(capital>0))return null;
+  const capital=currentCapital();if(!(capital>0)||!(odds>=1.01))return null;
+  const cap5=capital*0.05;
+  const base=Math.min(cap5,capital*0.02/(odds-1));
   const hist=activeBets().filter(b=>isSettled(b)&&!b.isFreebet&&b.betType!=='lay'&&betOdds(b)>0);
-  if(!(odds>=1.01))return null;
-  if(hist.length<10)
-    return {stake:capital*0.02,txt:`Base prudente : 2% du capital. Il faut ≥ 10 paris réglés pour affiner (${hist.length} actuellement).`};
-  const sim=hist.filter(b=>{const o=betOdds(b);return o>=odds/1.25&&o<=odds*1.25;});
-  const pool=sim.length>=10?sim:hist;
-  const wins=pool.filter(isWin).length,n=pool.length;
-  const p0=1/odds,m=10;
-  const p=(wins+m*p0)/(n+m);
+  const band=hist.filter(b=>{const o=betOdds(b);return o>=odds/1.3&&o<=odds*1.3;});
+  const p0=1/odds;
+  if(band.length<10){
+    return {stake:base,txt:`Règle sécurité : viser +2% du capital si gagné → ${fmt(base/capital*100,2)}% du capital à cote ${fmt(odds,2)}. `
+      +`Pas assez de paris réglés à cotes similaires (${band.length}/10) pour estimer un edge — plus tu joues cette gamme de cotes, plus le conseil s'affinera.`};
+  }
+  const wins=band.filter(isWin).length,n=band.length,m=15;
+  let p=(wins+m*p0)/(n+m);
+  p=Math.min(p,p0*2.5,0.95); // plafond : jamais plus de 2,5× la proba implicite
   const f=(p*odds-1)/(odds-1);
-  if(f<=0)
-    return {stake:capital*0.01,txt:`Pas d'edge détecté à cette cote (réussite ${fmt(wins/n*100,0)}% sur ${n} paris${sim.length>=10?' similaires':''}) → mise prudente 1%.`};
-  const frac=Math.min(0.05,f*0.25);
-  return {stake:capital*frac,txt:`¼ Kelly = ${fmt(frac*100,1)}% du capital · réussite ${fmt(wins/n*100,0)}% sur ${n} paris ${sim.length>=10?'à cotes similaires':'(toutes cotes)'} · p estimée ${fmt(p*100,0)}% vs implicite ${fmt(p0*100,0)}%.`};
+  if(f<=0){
+    const half=base*0.5;
+    return {stake:half,txt:`Pas d'edge sur cette gamme de cotes : ${fmt(wins/n*100,0)}% de réussite sur ${n} paris similaires (implicite ${fmt(p0*100,0)}%) → demi-mise sécurité.`};
+  }
+  const kelly=Math.min(cap5,capital*f*0.25);
+  const stake=Math.min(kelly,base*2.5);
+  return {stake,txt:`¼ Kelly borné = ${fmt(stake/capital*100,2)}% du capital · ${fmt(wins/n*100,0)}% de réussite sur ${n} paris à cotes similaires (implicite ${fmt(p0*100,0)}%, p retenue ${fmt(p*100,0)}%). `
+    +`Base sécurité : ${fmt(base)}${cur()}.`};
 }
 function updateAdvise(){
   const el=document.getElementById('adviseBox');if(!el)return;
@@ -1761,7 +1775,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v8 — Scan IA ameliore';
+const APP_VER='v9 — Mise conseillee v2';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
