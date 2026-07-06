@@ -1,65 +1,54 @@
-# Rapport : quelle stratégie de mise pour TA bankroll
+# Rapport stratégie de mise — v2
 
-Basé sur tes **155 paris réglés en argent réel** (Supabase, sauvegarde du 06/07/2026).
-Méthode : profil par gamme de cotes, puis 5 000 scénarios Monte Carlo (bootstrap de ton historique) par stratégie, départ 100 €, puis 3 tests de robustesse.
+155 paris réglés en argent réel (Supabase 06/07/2026), **paris Penalty World identifiés et traités à part**. Simulation de l'app « en conditions réelles » : à chaque pari, le conseil n'utilise que ton historique passé (aucune triche statistique).
 
-## Ton profil réel
+## 1. Ton vrai profil (une fois la promo isolée)
 
-ROI global **+25,3 %** (+175 € pour 690 € misés). Attention : 3 semaines de données, la chance joue encore. Par gamme de cotes :
+| | n | Mises | P&L cash | ROI |
+|---|---|---|---|---|
+| **Paris libres** (tes pronos) | 117 | 500 € | **+188 €** | **+37,6 %** |
+| **Paris promo** (score exact @3, mise imposée) | 38 | 190 € | −13 € | −6,8 % |
+| **Freebets convertis** (dutching ~75 %) | 4 | 0 € cash | +34,5 € | ∞ |
+| **Total** | | | **+209,5 €** | |
 
-| Gamme | n | Réussite | Nécessaire | ROI | Verdict |
-|---|---|---|---|---|---|
-| 1.01–1.70 | 10 | 70 % | 63 % | +14 % | ✅ léger edge |
-| **1.70–2.30** | **35** | **63 %** | **50 %** | **+33 %** | ✅✅ **ta meilleure zone** (buteurs, boosts) |
-| **2.30–2.80** | **16** | **62 %** | **40 %** | **+89 %** | ✅✅ excellent (petit échantillon) |
-| **2.80–3.30** | **48** | **31 %** | **33 %** | **−9,7 %** | ❌ **ta zone perdante : les scores exacts** |
-| 3.30–4.50 | 20 | 40 % | 28 % | +34 % | ✅ bon |
-| 4.50–8 | 9 | 33 % | 17 % | +96 % | ❓ trop petit échantillon |
-| 8+ | 17 | 6 % | 5 % | +28 % | ❓ tout vient d'UN pari gagné à 35.0 — pas de conclusion |
+Lecture : ton −6,8 % sur la promo est le loyer payé au bookmaker pour farmer les entrées, largement remboursé par les +34,5 € de freebets. Et ton ROI de pronostiqueur pur est de **+37,6 %** — exceptionnel, mais sur 3 semaines seulement : l'intervalle de confiance reste très large, une partie est de la chance.
 
-**Le fait le plus important de ce rapport** : ta stratégie « score exact » est ton plus gros volume (48 paris, ~240 € misés) et ta seule poche clairement perdante (−23 € environ). La supprimer ou la réduire vaut plus que n'importe quelle formule de mise.
+## 2. LA réponse à ta question : toi vs la meilleure stratégie
 
-## Backtest des stratégies (bootstrap sur ton historique, in-sample)
+Mêmes 155 paris, même ordre, départ 100 €, promo laissée à 5 € imposés dans les deux cas :
 
-| Stratégie | Médiane | P5 (pire 5 %) | Ruine | Drawdown méd. | P(finir en perte) |
-|---|---|---|---|---|---|
-| **Martingale** | **0 €** | 0 € | **52 %** | −100 % | 53 % |
-| Fibonacci | 234 € | 0 € | **41 %** | −66 % | 42 % |
-| D'Alembert | 484 € | 0 € | **31 %** | −63 % | 32 % |
-| Paroli | 230 € | 76 € | 1 % | −28 % | 9 % |
-| Flat 2 % | 192 € | 95 € | 0 % | −18 % | 6 % |
-| % capital 2 % | 206 € | 89 € | 0 % | −23 % | 9 % |
-| Risque constant 2 %/(cote−1) | 145 € | 104 € | 0 % | −12 % | 3 % |
-| **¼ Kelly borné (l'app, v2)** | **264 €** | **147 €** | 0 % | −15 % | **0 %** |
-| ¼ Kelly non borné | 334 € | 168 € | 0 % | −18 % | 0 % |
-| ½ Kelly | 918 € | 227 € | 0 % | −33 % | 0 % |
+| | Capital final | Profit | Drawdown max |
+|---|---|---|---|
+| **Tes mises « aléatoires »** | **275 €** | **+175 €** | −20 % |
+| **Mises de l'app (¼ Kelly borné, apprentissage en ligne)** | 179 € | +79 € | −25 % |
 
-Rappel : tes mises réelles rejouées donnent 275 € — ton staking instinctif était déjà bon (petites mises sur grosses cotes).
+**Oui, tu as fait plus du double de l'app.** Mais il faut comprendre pourquoi avant d'en tirer la mauvaise conclusion :
 
-## Tests de robustesse (là où les mirages meurent)
+**Raison 1 — tu as pris beaucoup plus de risque.** Tes mises de 5-20 € sur un capital de ~100 € = 5 à 20 % par pari. L'app plafonne à 5 %. Ton niveau de risque réel correspondait à un capital « virtuel » de 200-300 € : l'app, avec 200 € de départ, fait **+171 €** ; avec 300 €, **+262 €** — quasiment ton résultat. Tu n'as pas mieux misé, tu as misé *plus gros*, et ça a payé parce que la séquence a été bonne.
 
-**Walk-forward** (edge estimé sur ta 1ère moitié, testé sur la 2ème) : le ¼ Kelly borné de l'app gagne — 7 % de proba de perte seulement, contre 15 % pour le Kelly non borné, 19 % pour le risque constant, 25 % pour le flat.
+**Raison 2 — l'app démarre aveugle.** Les 30-40 premiers paris, elle n'a pas encore 10 paris par gamme de cotes : elle mise petit par prudence. Toi, tu misais déjà 10 € sur du 2.0 dès le début — avec raison a posteriori, mais sans preuve à ce moment-là.
 
-**Monde pessimiste** (ton vrai edge = la moitié de l'observé) : toutes les variantes Kelly restent gagnantes en médiane ; le ½ Kelly voit son avantage fondre et son drawdown doubler.
+**Le verdict des 4 000 futurs alternatifs** (bootstrap de ta séquence) : tes mises fixes → médiane 273 €, 4 % de proba de finir en perte. Sur CETTE longueur et avec TON edge réel, ta méthode agressive est légitime. Ce n'est pas de la chance pure : c'est un gros edge exploité agressivement.
 
-**Monde sans edge** (proba réelle = proba implicite) : AUCUNE stratégie ne gagne — médiane 92–98 € partout. Leçon fondamentale : **une stratégie de mise ne crée jamais d'edge, elle ne fait que protéger ou exploiter celui qui existe.**
+## 3. Mais sur le long terme, les % battent les € fixes
 
-## Verdict : pourquoi ça non, ça non, ça oui
+Simulation 465 paris (3× ton historique), même distribution :
 
-**❌ Martingale / Fibonacci / D'Alembert** — Sur TES données : 31 à 52 % de probabilité de ruine. La médiane élevée du D'Alembert (484 €) est un piège : un tiers des scénarios meurt à zéro. Ces systèmes « récupèrent les pertes » jusqu'au jour où la série perdante dépasse le capital — et avec 69 % d'échec sur tes scores exacts, les séries de 8+ pertes sont fréquentes chez toi.
+| | Médiane | P95 | Faiblesse |
+|---|---|---|---|
+| Tes mises fixes (5-20 €) | 616 € | 893 € | **ne composent pas** : à 600 € de capital, tu miserais toujours 5-20 € |
+| App (% du capital) | **875 €** | **3 321 €** | démarrage lent |
 
-**❌ Paroli** — Pas de risque de ruine, mais domine le flat sur aucun critère. Complexité sans bénéfice.
+Tes mises fixes plafonnent ta croissance : quand le capital triple, tes mises restent identiques, donc ton rendement en % s'effondre mécaniquement. Les mises en % composent — c'est l'intérêt exponentiel contre l'intérêt simple.
 
-**❌ Flat / % fixe** — Sains, mais ils misent PAREIL sur ta zone à +33 % et sur ta zone à −10 %. C'est laisser de l'argent sur la table : dominés par Kelly sur tous les mondes testés.
+⚠ Découverte annexe de la simulation longue : la quasi-ruine de l'app (5,5 %) vient **des paris promo à mise fixe** — si le capital tombe à 30 €, miser 5 € imposés sur du −7 % devient dangereux. Règle pratique : **farme la promo seulement tant que ton capital dépasse ~15× la mise imposée (75 €)**.
 
-**❌ ½ Kelly ou Kelly plein** — Le grand séducteur : médiane ×9 in-sample. Mais il ne gagne que dans le monde où ton +25 % de ROI sur 3 semaines est 100 % réel. Dès qu'on divise l'edge par deux, son avantage s'effondre et son drawdown (−33 %) devient dur à vivre. Avec 155 paris, tu n'as pas le droit statistique d'y croire encore.
+## 4. Ce qu'il faut retenir (le plan de jeu)
 
-**✅ ¼ Kelly borné + sélectif (ce que fait l'app en v2)** — C'est le seul qui gagne sur les trois tableaux : 2ème meilleure médiane in-sample, meilleure proba de ne pas perdre en walk-forward, dégâts contenus dans le monde sans edge. Il mise gros là où ton edge est démontré (1.70–2.80), des miettes là où rien n'est prouvé, et rien de plus que la demi-mise sécurité là où tu perds.
+1. **Continue tes pronos sur 1.70–2.80** — c'est là que vivent tes +37,6 %. Zone 1.70–2.30 : 63 % de réussite sur 35 paris là où 50 % suffit.
+2. **Adopte les mises en % via l'app, mais calibrées sur ton vrai capital.** Si tu es prêt à risquer comme aujourd'hui, considère ton capital réel (dépôts inclus, pas 100 €) : l'app misera 2-5 % de ce montant et composera. Ton +175 € n'était pas répétable à l'infini avec des mises fixes.
+3. **La promo Penalty World est rentable, garde-la** (−13 € cash contre +34,5 € de FB), tague-la « Défi/Promo », et arrête-la si le capital passe sous ~75 €.
+4. **Les martingales restent mortes** : 31-52 % de ruine sur tes propres données (v1 du rapport, inchangé).
+5. **Rendez-vous à 300 paris libres.** Si ton ROI libre est encore >15 %, on relèvera les bornes Kelly de l'app (½ Kelly deviendra défendable). C'est le seul « upgrade » de stratégie qui existe : plus de preuve → plus d'agressivité autorisée.
 
-## Les 3 actions qui rapportent vraiment (par ordre d'impact)
-
-1. **Coupe (ou divise par 4) les scores exacts à ~3.0.** 48 paris, −9,7 % de ROI, ton plus gros volume. L'app affiche maintenant un avertissement rouge quand tu saisis une cote dans une zone historiquement perdante.
-2. **Recharge ta meilleure zone.** Chaque euro sorti des scores exacts et rejoué sur tes buteurs/boosts à 1.70–2.80 a historiquement rapporté ~+0,33 € au lieu de −0,10 €.
-3. **Suis la mise conseillée de l'app** — c'est littéralement la stratégie gagnante du backtest. Les cotes 8+ à 1 € « pour le fun » : continue comme ça, c'est déjà la bonne taille.
-
-Re-fais tourner cette analyse dans ~150 paris : avec 300+ paris, on pourra tester si ton edge à 4.50–8 est réel et affiner les bornes Kelly.
+*Rappel honnête : aucune stratégie de mise ne crée d'edge (monde sans edge simulé : tout le monde perd). La tienne a gagné parce que TU as un edge de pronostic. La stratégie de mise ne fait que décider à quelle vitesse tu exploites cet edge et combien tu risques de tout perdre en chemin.*
