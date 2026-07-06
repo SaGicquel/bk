@@ -751,14 +751,23 @@ function adviseStake(odds){
     return {stake:half,cls:'warn',txt:`⚠ Zone historiquement perdante pour toi : ${fmt(wins/n*100,0)}% de réussite sur ${n} paris à cotes similaires (il faudrait ${fmt(p0*100,0)}%), ROI ${signed(bPnl/bStake*100,1)}%. `
       +`Demi-mise sécurité — ou passe ton tour et garde ces ${fmt(half)}${cur()} pour tes zones gagnantes.`};
   }
-  const kelly=Math.min(cap5,capital*f*0.25);
-  const stake=Math.min(kelly,base*2.5);
-  return {stake,txt:`¼ Kelly borné = ${fmt(stake/capital*100,2)}% du capital · ${fmt(wins/n*100,0)}% de réussite sur ${n} paris à cotes similaires (implicite ${fmt(p0*100,0)}%, p retenue ${fmt(p*100,0)}%). `
-    +`Base sécurité : ${fmt(base)}${cur()}.`};
+  // Kelly PROGRESSIF (gagnant du backtest v3) : fraction 25% → 50% à mesure que l'échantillon grandit
+  const frac=0.25+0.25*Math.min(1,n/50);
+  const kelly=Math.min(capital*0.08,capital*f*frac);
+  const stake=Math.min(kelly,base*3.5);
+  return {stake,txt:`Kelly progressif ${fmt(frac*100,0)}% (monte avec la preuve : ${n}/50 paris) = ${fmt(stake/capital*100,2)}% du capital · `
+    +`${fmt(wins/n*100,0)}% de réussite sur ${n} paris à cotes similaires (implicite ${fmt(p0*100,0)}%, p retenue ${fmt(p*100,0)}%).`};
 }
 function updateAdvise(){
   const el=document.getElementById('adviseBox');if(!el)return;
   if(modalType==='lay'||modalPctMode){el.innerHTML='';return;}
+  if(chk('f_promo')){
+    const c=currentCapital(),s=pfr(val('f_stake'))||5;
+    el.innerHTML=`<div class="advise${c<15*s?' warn':''}">Pari de défi : mise imposée par la promo. `
+      +(c<15*s?`⚠ Capital ${fmt(c)}${cur()} < 15× la mise — arrête de farmer la promo en dessous de ${fmt(15*s,0)}${cur()}.`
+      :`Rentable tant que ton capital reste au-dessus de ~15× la mise (${fmt(15*s,0)}${cur()}).`)+`</div>`;
+    return;
+  }
   const odds=(modalType==='combo'||modalType==='system')
     ?comboOdds(modalSelections.filter(s=>pfr(s.odds)>0))
     :pfr(val('f_odds'));
@@ -854,7 +863,7 @@ function drawBetModal(){
   body+=`<label>Note</label><textarea id="f_note" placeholder="Détail...">${esc(md.note)}</textarea>
       <div class="toggle-row"><label><input type="checkbox" id="f_fb" ${md.fb?'checked':''}> Freebet</label>
         <label><input type="checkbox" id="f_live" ${md.live?'checked':''}> Live</label>
-        <label><input type="checkbox" id="f_promo" ${md.promo?'checked':''}> Défi/Promo</label></div>
+        <label><input type="checkbox" id="f_promo" ${md.promo?'checked':''} onchange="updateAdvise()"> Défi/Promo</label></div>
       <div class="muted" style="font-size:11px;margin-top:4px">Défi/Promo : pari de qualification (ex : Penalty World). Compté dans le profit, mais exclu du calcul d'edge de la mise conseillée.</div>
     </div></details>
     <datalist id="sportList">${SPORTS.map(s=>`<option value="${s}">`).join('')}</datalist>
@@ -1785,7 +1794,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v11 — Tag Defi/Promo';
+const APP_VER='v12 — Kelly progressif';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
