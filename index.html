@@ -52,6 +52,8 @@ h2.section{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var
 .advise{margin-top:8px;background:rgba(255,176,32,.08);border:1px solid rgba(255,176,32,.25);border-radius:10px;padding:9px 11px;font-size:12px;color:var(--muted);line-height:1.5}
 .advise b{color:var(--accent);font-size:14px;font-family:var(--mono)}
 .advise .apply{float:right;background:var(--accent);color:#1a1205;border:none;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;margin-left:8px}
+.advise.warn{background:rgba(255,93,108,.08);border-color:rgba(255,93,108,.3)}
+.advise.warn b{color:var(--neg)}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 14px}
 .stat .k{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
@@ -741,7 +743,10 @@ function adviseStake(odds){
   const f=(p*odds-1)/(odds-1);
   if(f<=0){
     const half=base*0.5;
-    return {stake:half,txt:`Pas d'edge sur cette gamme de cotes : ${fmt(wins/n*100,0)}% de réussite sur ${n} paris similaires (implicite ${fmt(p0*100,0)}%) → demi-mise sécurité.`};
+    const bStake=band.reduce((a,b)=>a+betStake(b),0);
+    const bPnl=band.reduce((a,b)=>a+betProfit(b),0);
+    return {stake:half,cls:'warn',txt:`⚠ Zone historiquement perdante pour toi : ${fmt(wins/n*100,0)}% de réussite sur ${n} paris à cotes similaires (il faudrait ${fmt(p0*100,0)}%), ROI ${signed(bPnl/bStake*100,1)}%. `
+      +`Demi-mise sécurité — ou passe ton tour et garde ces ${fmt(half)}${cur()} pour tes zones gagnantes.`};
   }
   const kelly=Math.min(cap5,capital*f*0.25);
   const stake=Math.min(kelly,base*2.5);
@@ -756,7 +761,7 @@ function updateAdvise(){
     :pfr(val('f_odds'));
   const a=adviseStake(odds);
   if(!a){el.innerHTML='';return;}
-  el.innerHTML=`<div class="advise"><button class="apply" onclick="setInput('f_stake','${a.stake.toFixed(2)}')">Utiliser</button>
+  el.innerHTML=`<div class="advise ${a.cls||''}"><button class="apply" onclick="setInput('f_stake','${a.stake.toFixed(2)}')">Utiliser</button>
     Mise conseillée : <b>${fmt(a.stake)}${cur()}</b><br>${a.txt}</div>`;
 }
 /* --- Tes paris habituels : configurations les plus fréquentes de ton historique --- */
@@ -1775,7 +1780,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v9 — Mise conseillee v2';
+const APP_VER='v10 — Zones perdantes signalees';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
