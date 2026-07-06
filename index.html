@@ -557,7 +557,7 @@ function betRow(b){
     <div class="info"><div class="line1">
       ${o>0?`<span class="odds num">@${fmtOdds(o)}</span>`:'<span class="odds num">SYS</span>'}
       <span class="badge ${cls}">${lbl}</span>${typeBadge}
-      ${b.isFreebet?'<span class="badge b-pending">FB</span>':''}${b.isLive?'<span class="badge b-void">LIVE</span>':''}</div>
+      ${b.isFreebet?'<span class="badge b-pending">FB</span>':''}${b.isLive?'<span class="badge b-void">LIVE</span>':''}${b.isPromo?'<span class="badge b-type">DÉFI</span>':''}</div>
       <div class="meta">${esc(meta)||'—'}</div>
       ${canQuick?`<div class="qbtns">
         <button class="qbtn w" aria-label="Marquer gagné" onclick="event.stopPropagation();quickSettle('${b.id}','won')">✓ Gagné</button>
@@ -646,15 +646,17 @@ function openBulkEdit(){
     <label>Bookmaker</label><input id="be_book" placeholder="(inchangé)">
     <label>Tipster</label><input id="be_tip" placeholder="(inchangé)">
     <label>Catégorie</label><input id="be_cat" placeholder="(inchangé)">
+    <label>Défi/Promo</label><select id="be_promo"><option value="">(inchangé)</option><option value="1">Oui</option><option value="0">Non</option></select>
     <div class="btn-row"><button class="btn primary" onclick="applyBulkEdit()">Appliquer</button></div>
     <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Annuler</button>`;
   openModal();
 }
 function applyBulkEdit(){
-  const st=val('be_status'),sp=val('be_sport').trim(),co=val('be_comp').trim(),bo=val('be_book').trim(),ti=val('be_tip').trim(),ca=val('be_cat').trim();
+  const st=val('be_status'),sp=val('be_sport').trim(),co=val('be_comp').trim(),bo=val('be_book').trim(),ti=val('be_tip').trim(),ca=val('be_cat').trim(),pm=val('be_promo');
   DB.bets.forEach(b=>{if(!selectedBets.has(b.id))return;
     if(st&&['single','lay'].includes(b.betType||'single'))b.status=st;
-    if(sp)b.sport=sp;if(co)b.competition=co;if(bo)b.bookmaker=bo;if(ti)b.tipster=ti;if(ca)b.category=ca;});
+    if(sp)b.sport=sp;if(co)b.competition=co;if(bo)b.bookmaker=bo;if(ti)b.tipster=ti;if(ca)b.category=ca;
+    if(pm!=='')b.isPromo=pm==='1';});
   save();selectedBets.clear();selectMode=false;document.getElementById('fab').style.display='block';renderAll();closeModal();toast('Paris modifiés');
 }
 function bulkDelete(){const rm=DB.bets.filter(b=>selectedBets.has(b.id));if(!rm.length)return;
@@ -687,7 +689,7 @@ function openBetModal(id){
   modalDraft=b?{stake:b.stake??'',odds:b.odds??'',comm:b.commission||0,cashout:b.cashoutAmount||'',
     date:(b.placedAt||'').slice(0,10)||new Date().toISOString().slice(0,10),closing:b.closingOdds||'',
     sport:b.sport||'',cat:b.category||'',comp:b.competition||'',book:b.bookmaker||'',tip:b.tipster||'',
-    note:b.note||'',fb:!!b.isFreebet,live:!!b.isLive,ewfrac:b.ewFraction||'1/4',sysk:b.systemK||2,cf:{...(b.customFields||{})}}
+    note:b.note||'',fb:!!b.isFreebet,live:!!b.isLive,promo:!!b.isPromo,ewfrac:b.ewFraction||'1/4',sysk:b.systemK||2,cf:{...(b.customFields||{})}}
    :{stake:'',odds:'',comm:0,cashout:'',date:new Date().toISOString().slice(0,10),closing:'',sport:'Football',
      cat:'',comp:'',book:activeBankroll()?.name||'',tip:'',note:'',fb:false,live:false,ewfrac:'1/4',sysk:2,cf:{}};
   advOpen=!!(b&&(b.closingOdds||b.category||b.competition||b.tipster||b.note||b.isFreebet||b.isLive));
@@ -701,8 +703,8 @@ function captureDraft(){
   set('date',g('f_date'));set('closing',g('f_closing'));set('sport',g('f_sport'));set('cat',g('f_cat'));
   set('comp',g('f_comp'));set('book',g('f_book'));set('tip',g('f_tip'));set('note',g('f_note'));
   set('ewfrac',g('f_ewfrac'));set('sysk',g('f_sysk'));
-  const fb=document.getElementById('f_fb'),lv=document.getElementById('f_live');
-  if(fb)modalDraft.fb=fb.checked;if(lv)modalDraft.live=lv.checked;
+  const fb=document.getElementById('f_fb'),lv=document.getElementById('f_live'),pr=document.getElementById('f_promo');
+  if(fb)modalDraft.fb=fb.checked;if(lv)modalDraft.live=lv.checked;if(pr)modalDraft.promo=pr.checked;
   const adv=document.getElementById('advOpts');if(adv)advOpen=adv.open;
   (DB.customFields||[]).forEach(f=>{const el=document.querySelector(`[data-cf="${cssesc(f)}"]`);if(el)modalDraft.cf[f]=el.value;});
 }
@@ -730,7 +732,8 @@ function adviseStake(odds){
   const capital=currentCapital();if(!(capital>0)||!(odds>=1.01))return null;
   const cap5=capital*0.05;
   const base=Math.min(cap5,capital*0.02/(odds-1));
-  const hist=activeBets().filter(b=>isSettled(b)&&!b.isFreebet&&b.betType!=='lay'&&betOdds(b)>0);
+  // Paris Défi/Promo exclus : leur ROI reflète le coût d'une promo, pas ton edge de pronostic
+  const hist=activeBets().filter(b=>isSettled(b)&&!b.isFreebet&&!b.isPromo&&b.betType!=='lay'&&betOdds(b)>0);
   const band=hist.filter(b=>{const o=betOdds(b);return o>=odds/1.3&&o<=odds*1.3;});
   const p0=1/odds;
   if(band.length<10){
@@ -850,7 +853,9 @@ function drawBetModal(){
   cf.forEach(f=>{body+=`<label>${esc(f)}</label><input data-cf="${esc(f)}" value="${esc(md.cf[f]||'')}">`;});
   body+=`<label>Note</label><textarea id="f_note" placeholder="Détail...">${esc(md.note)}</textarea>
       <div class="toggle-row"><label><input type="checkbox" id="f_fb" ${md.fb?'checked':''}> Freebet</label>
-        <label><input type="checkbox" id="f_live" ${md.live?'checked':''}> Live</label></div>
+        <label><input type="checkbox" id="f_live" ${md.live?'checked':''}> Live</label>
+        <label><input type="checkbox" id="f_promo" ${md.promo?'checked':''}> Défi/Promo</label></div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Défi/Promo : pari de qualification (ex : Penalty World). Compté dans le profit, mais exclu du calcul d'edge de la mise conseillée.</div>
     </div></details>
     <datalist id="sportList">${SPORTS.map(s=>`<option value="${s}">`).join('')}</datalist>
     <datalist id="compList">${COMPETITIONS.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
@@ -879,7 +884,7 @@ function duplicateBet(id){
   modalDraft={stake:c.stake??'',odds:c.odds??'',comm:c.commission||0,cashout:'',
     date:new Date().toISOString().slice(0,10),closing:'',
     sport:c.sport||'',cat:c.category||'',comp:c.competition||'',book:c.bookmaker||'',tip:c.tipster||'',
-    note:'',fb:false,live:false,ewfrac:c.ewFraction||'1/4',sysk:c.systemK||2,cf:{...(c.customFields||{})}};
+    note:'',fb:false,live:false,promo:!!c.isPromo,ewfrac:c.ewFraction||'1/4',sysk:c.systemK||2,cf:{...(c.customFields||{})}};
   advOpen=!!(c.category||c.competition||c.tipster);
   drawBetModal();toast('Copie du pari — vérifie mise et date');
 }
@@ -918,7 +923,7 @@ function markErr(id,on){const e=document.getElementById(id);if(e)e.classList.tog
 function saveBet(keepOpen){
   const common={placedAt:val('f_date'),closingOdds:pfr(val('f_closing'))||null,
     category:val('f_cat').trim(),sport:val('f_sport').trim(),competition:val('f_comp').trim(),bookmaker:val('f_book').trim(),tipster:val('f_tip').trim(),
-    note:val('f_note').trim(),isFreebet:chk('f_fb'),isLive:chk('f_live'),
+    note:val('f_note').trim(),isFreebet:chk('f_fb'),isLive:chk('f_live'),isPromo:chk('f_promo'),
     customFields:Object.fromEntries((DB.customFields||[]).map(f=>[f,(document.querySelector(`[data-cf="${cssesc(f)}"]`)?.value||'').trim()]))};
   let data;
   if(modalType==='single'||modalType==='lay'){
@@ -1780,7 +1785,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v10 — Zones perdantes signalees';
+const APP_VER='v11 — Tag Defi/Promo';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
