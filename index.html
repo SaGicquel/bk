@@ -464,7 +464,8 @@ function equitySeries(bets,start,txs){
 
 /* ===================== RENDER GLOBAL ===================== */
 function renderAll(){renderTopbar();renderDash();renderBets();renderSettings();
-  if(document.getElementById('view-analyse').classList.contains('active'))renderAnalyse();}
+  if(document.getElementById('view-analyse').classList.contains('active'))renderAnalyse();
+  if(document.getElementById('view-tools').classList.contains('active'))mcCalc();}
 function renderTopbar(){
   const sel=document.getElementById('bankrollSelect');
   const opts=visibleBankrolls().map(b=>`<option value="${b.id}" ${b.id===DB.activeId?'selected':''}>${esc(b.name)}</option>`);
@@ -1694,9 +1695,12 @@ function drawAiPreview(){
     <div class="muted" style="font-size:12px;margin-bottom:10px">${aiParsed.length} pari${aiParsed.length>1?'s':''} détecté${aiParsed.length>1?'s':''} — corrige si besoin.</div>`;
   aiParsed.forEach((b,i)=>{
     const badge=b.status==='won'?'b-won':b.status==='lost'?'b-lost':b.status==='void'?'b-void':'b-pending';
+    // Détection auto Penalty World : score exact + cote >= 3 + mise exactement 5€
+    const autoPromo=/score\s*exact/i.test(b.selection||'')&&(+b.odds>=3)&&Math.abs((+b.stake)-5)<0.001;
     h+=`<div class="aicard">
       <div class="aihead"><input type="checkbox" checked data-ai-ck="${i}">
         <span class="ttl">${esc(b.match||b.selection||'Pari '+(i+1))}</span>
+        ${autoPromo?'<span class="badge b-type">DÉFI auto</span>':''}
         <span class="badge ${badge}">${{won:'Gagné',lost:'Perdu',pending:'En cours',void:'Annulé'}[b.status]||'?'}</span></div>
       <div class="grid2">
         <div><label>Match</label><input data-ai="${i}" data-f="match" value="${esc(b.match||'')}"></div>
@@ -1708,6 +1712,8 @@ function drawAiPreview(){
         <div><label>Date</label><input data-ai="${i}" data-f="date" type="date" value="${/^\d{4}-\d{2}-\d{2}$/.test(b.date||'')?b.date:today}"></div>
         <div><label>Sport</label><input data-ai="${i}" data-f="sport" value="${esc(b.sport||'')}"></div>
         <div><label>Compétition</label><input data-ai="${i}" data-f="competition" value="${esc(b.competition||'')}"></div>
+        <div style="grid-column:1/-1"><label style="display:flex;align-items:center;gap:7px;text-transform:none;font-size:13px;color:var(--text)">
+          <input type="checkbox" data-ai="${i}" data-f="promo" ${autoPromo?'checked':''} style="width:auto;accent-color:var(--accent)"> Défi/Promo (exclu du calcul d'edge)</label></div>
       </div></div>`;
   });
   h+=`<div class="btn-row"><button class="btn primary" onclick="importAiBets()">Importer les paris cochés</button></div>
@@ -1723,12 +1729,13 @@ function importAiBets(){
     if(!ck||!ck.checked)return;
     const stake=pfr(g(i,'stake')),odds=pfr(g(i,'odds'));
     if(!(stake>0)&&!(odds>0))return;
+    const pEl=document.querySelector(`[data-ai="${i}"][data-f="promo"]`);
     DB.bets.push({id:uid(),bankrollId:DB.activeId,createdAt:Date.now(),betType:'single',
       stake:stake||0,odds:odds||1,status:g(i,'status')||'pending',
       placedAt:g(i,'date')||new Date().toISOString().slice(0,10),
       sport:g(i,'sport'),competition:g(i,'competition'),bookmaker:(aiParsed[i].bookmaker||'').trim(),
       category:g(i,'selection'),tipster:'',note:[g(i,'match'),g(i,'detail')].filter(Boolean).join(' — '),
-      isFreebet:false,isLive:false,closingOdds:null,customFields:{}});
+      isFreebet:false,isLive:false,isPromo:!!(pEl&&pEl.checked),closingOdds:null,customFields:{}});
     added++;
   });
   if(!added){toast('Aucun pari à importer');return;}
@@ -1810,7 +1817,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v13 — Calculatrice mise conseillee';
+const APP_VER='v14 — Refresh bk + Defi auto au scan';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
