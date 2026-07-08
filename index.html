@@ -753,6 +753,14 @@ function canonCat(raw){
   if(c.includes('decisif')||c.includes('but ou passe'))return'Joueur décisif';
   if(c.includes('passe'))return'Passe décisive';
   if(c.includes('btts')||c.includes('marquent'))return'Les deux équipes marquent';
+  // Marchés joueur / autres sports (AVANT la règle générique plus/moins, sinon "+24.5 pts" filerait dans les buts)
+  if(c.includes('rebond'))return'Rebonds joueur';
+  if(/\b(pts|points?)\b/.test(c))return'Points joueur';
+  if(c.includes('jeux')||/\bjeu\b/.test(c))return'Plus/Moins jeux';
+  if(/\bsets?\b/.test(c))return'Set (tennis)';
+  if(c.includes('handicap'))return'Handicap';
+  if(c.includes('corner'))return'Corners';
+  if(c.includes('carton'))return'Cartons';
   if(/(plus|moins|over|under|\d[.,]5)/.test(c)||c.includes('nombre de but')||c.includes('periode')||/^\d+ ?but/.test(c))return'Plus/Moins buts';
   if(c.includes('double chance'))return'Double chance';
   if(c.includes('qualification'))return'Qualification';
@@ -1887,7 +1895,7 @@ const AI_PROMPT=`Tu extrais des paris sportifs depuis des captures d'écran d'ap
 Retourne un tableau JSON, un élément par pari visible (même partiellement).
 Champs :
 - match : les équipes ou joueurs, ex "Brésil - Norvège".
-- selection : le TYPE de marché, choisi EXACTEMENT parmi cette liste : "Score exact", "Buteur", "Passe décisive", "Joueur décisif", "Plus/Moins buts", "Les deux équipes marquent", "Penalty", "But de la tête", "Double chance", "Vainqueur / 1N2", "Qualification", "Cote boostée", "Marché combiné" (pour les paris "X et Y"), "Conversion freebet". Si aucun ne correspond, le terme court le plus proche. Ne recopie JAMAIS le détail (ni liste de scores, ni nom de joueur).
+- selection : le TYPE de marché. Choisis EXACTEMENT parmi cette liste s'il correspond : "Score exact", "Buteur", "Passe décisive", "Joueur décisif", "Plus/Moins buts", "Les deux équipes marquent", "Penalty", "But de la tête", "Double chance", "Vainqueur / 1N2", "Qualification", "Cote boostée", "Marché combiné" (paris "X et Y"), "Conversion freebet", "Points joueur", "Rebonds joueur", "Plus/Moins jeux", "Set (tennis)", "Handicap", "Corners", "Cartons". Si AUCUN ne correspond (marché inédit), INVENTE un libellé court et générique de 1 à 3 mots décrivant le type de marché (ex "Aces serveur", "Tour du KO", "Buts encaissés gardien") — JAMAIS le détail : pas de nom de joueur, pas de valeur de ligne, pas de liste de scores (tout ça va dans "detail").
 - detail : le détail précis de la sélection, ex "Yago Cariello" pour un buteur, ou la liste des scores pour un score exact. "" si rien.
 - odds : cote décimale en nombre.
 - stake : mise en nombre, sans le symbole €.
@@ -2058,7 +2066,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v20 — Donnees harmonisees';
+const APP_VER='v21 — Taxonomie ouverte';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
