@@ -325,9 +325,9 @@ function load(){
   try{const r=localStorage.getItem(KEY);if(r)return migrate(JSON.parse(r));}catch(e){}
   // migration depuis v1
   try{const old=localStorage.getItem('bankroll_db_v1');if(old){const d=JSON.parse(old);d.customFields=[];return d;}}catch(e){}
-  return {bankrolls:[{id:uid(),name:'Bankroll principale',startingCapital:100,currency:'€'}],bets:[],activeId:null,customFields:[],transactions:[],settings:{}};
+  return {bankrolls:[{id:uid(),name:'Bankroll principale',startingCapital:100,currency:'€'}],bets:[],activeId:null,customFields:[],transactions:[],ladders:[],settings:{}};
 }
-function migrate(d){if(!d.customFields)d.customFields=[];if(!d.transactions)d.transactions=[];
+function migrate(d){if(!d.customFields)d.customFields=[];if(!d.transactions)d.transactions=[];if(!d.ladders)d.ladders=[];
   (d.bankrolls||[]).forEach(b=>{if(b.archived===undefined)b.archived=false;if(!b.oddsFormat)b.oddsFormat='decimal';});
   return d;}
 function save(){DB._updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(DB));cloudQueue();updateBadge();}
@@ -465,7 +465,7 @@ function equitySeries(bets,start,txs){
 /* ===================== RENDER GLOBAL ===================== */
 function renderAll(){renderTopbar();renderDash();renderBets();renderSettings();
   if(document.getElementById('view-analyse').classList.contains('active'))renderAnalyse();
-  if(document.getElementById('view-tools').classList.contains('active'))mcCalc();}
+  if(document.getElementById('view-tools').classList.contains('active')){mcCalc();renderLadder();}}
 function renderTopbar(){
   const sel=document.getElementById('bankrollSelect');
   const opts=visibleBankrolls().map(b=>`<option value="${b.id}" ${b.id===DB.activeId?'selected':''}>${esc(b.name)}</option>`);
@@ -1165,6 +1165,7 @@ function switchTool(t){toolTab=t;
   if(t==='rising'&&!document.getElementById('tool-rising').innerHTML.trim())renderRising();
   if(t==='calc'&&!document.getElementById('tool-calc').innerHTML.trim())renderCalc();
   else if(t==='calc')mcCalc(); // rafraîchit avec la bankroll active
+  if(t==='rising'&&document.getElementById('tool-rising').innerHTML.trim())renderLadder();
 }
 function renderOptim(){
   document.getElementById('tool-optim').innerHTML=`
@@ -1264,6 +1265,85 @@ function histoSvg(finals,start){const min=finals[0],max=finals[finals.length-1],
     <div class="histo">${counts.map((c,i)=>{const v=min+(i+0.5)/bins*(max-min);
       return `<div class="bar" style="height:${c/mx*100}%;background:${v>=start?'var(--pos)':'var(--neg)'}"></div>`;}).join('')}</div>`;
 }
+/* ===== Suivi de montante en cours (palier par palier, cotes connues au fil de l'eau) =====
+   Règle d'écrêtage Kelly : à chaque palier, seule la part du pot ≤ mise Kelly continue de rouler,
+   l'excédent va au coffre. Une montante écrêtée = une suite de paris Kelly : croissance optimale. */
+function openLadder(){return (DB.ladders||[]).find(l=>l.bankrollId===DB.activeId&&l.status==='open');}
+function renderLadder(){
+  const box=document.getElementById('ladderBox');if(!box)return;
+  const L=openLadder();
+  const sports=recentVals('sport',SPORTS);
+  if(!L){
+    const done=(DB.ladders||[]).filter(l=>l.bankrollId===DB.activeId&&l.status!=='open').slice(-3);
+    box.innerHTML=`<div class="tool" style="border-color:rgba(46,230,166,.45)"><h4>🎯 Montante en cours</h4>
+      <div class="desc">Palier par palier : tu entres la cote quand tu la connais, l'app te dit combien jouer et combien sécuriser. (Enregistre quand même chaque pari normalement — scan ou +.)</div>
+      <label>Ticket de départ (${cur()})</label><input class="num" id="ld2_ticket" type="text" inputmode="decimal" autocomplete="off" value="${(currentCapital()*0.03).toFixed(2)}">
+      <div class="muted" style="font-size:11px;margin:4px 0 8px">Suggestion : ~3% du capital (${fmt(currentCapital())}${cur()}) — le bon ordre de grandeur Kelly pour 3-4 paliers vers cote 2.</div>
+      <button class="btn primary" onclick="startLadder()">▶ Démarrer la montante</button>
+      ${done.length?`<div class="muted" style="font-size:12px;margin-top:10px">Dernières : ${done.map(l=>{
+        const g=l.coffre-l.ticket;
+        return `<span class="${g>=0?'pos':'neg'}">${l.status==='lost'?'perdue':'encaissée'} ${signed(g)}${cur()}</span>`;}).join(' · ')}</div>`:''}
+    </div>`;
+    return;
+  }
+  const stepsTxt=L.steps.map((s,i)=>`${i+1}: @${fmt(s.o,2)} ${s.won?'✓':'✗'}`).join(' · ');
+  box.innerHTML=`<div class="tool" style="border-color:rgba(46,230,166,.45)"><h4>🎯 Montante en cours — palier ${L.steps.length+1}</h4>
+    <div class="desc">${stepsTxt||'Premier palier'} · ticket ${fmt(L.ticket)}${cur()}</div>
+    <div class="grid" style="margin-bottom:10px">
+      <div class="stat"><div class="k">En jeu</div><div class="v num">${fmt(L.enJeu)}${cur()}</div></div>
+      <div class="stat"><div class="k">Au coffre (sécurisé)</div><div class="v num pos">${fmt(L.coffre)}${cur()}</div></div></div>
+    <div class="field-row"><div><label>Cote du palier</label><input class="num" id="ld2_odds" type="text" inputmode="decimal" autocomplete="off" placeholder="2.14" oninput="ladderStepAdvice()"></div>
+      <div><label>Sport</label><select id="ld2_sport" onchange="ladderStepAdvice()">${sports.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div></div>
+    <label>Marché (optionnel)</label><input id="ld2_market" autocomplete="off" placeholder="ex : Buteur" oninput="ladderStepAdvice()">
+    <div id="ld2_adv"></div>
+    <label>Mise réellement jouée (${cur()})</label><input class="num" id="ld2_play" type="text" inputmode="decimal" autocomplete="off" value="${L.enJeu.toFixed(2)}">
+    <div class="btn-row"><button class="btn primary" onclick="ladderResult(true)">Gagné ✓</button>
+      <button class="btn danger" onclick="ladderResult(false)">Perdu ✗</button></div>
+    <button class="btn ghost" style="margin-top:8px" onclick="cashLadder()">💰 Encaisser et arrêter (${fmt(L.enJeu+L.coffre)}${cur()})</button>
+  </div>`;
+}
+function ladderStepAdvice(){
+  const L=openLadder();const el=document.getElementById('ld2_adv');if(!L||!el)return;
+  const o=pfr(val('ld2_odds'));
+  if(!(o>=1.2)){el.innerHTML='';return;}
+  const est=estimateP(o,{sport:val('ld2_sport'),market:val('ld2_market')});
+  const p=est.effN>=5?est.p:est.p0;
+  const f=(p*o-1)/(o-1);
+  const capital=currentCapital();
+  const frac=0.25+0.25*Math.min(1,est.effN/50);
+  const kelly=Math.max(MIN_STAKE,Math.min(capital*0.08,capital*Math.max(0,f)*frac));
+  const play=Math.max(MIN_STAKE,Math.min(L.enJeu,f>0?kelly:Math.min(L.enJeu,capital*0.01)));
+  const aside=Math.max(0,L.enJeu-play);
+  const pl=document.getElementById('ld2_play');if(pl)pl.value=play.toFixed(2);
+  el.innerHTML=`<div class="advise ${f<=0?'warn':''}">
+    ${f<=0?`⚠ Pas d'edge détecté sur ce contexte — envisage d'encaisser (${fmt(L.enJeu+L.coffre)}${cur()}). Sinon : `:''}
+    jouer <b>${fmt(play)}${cur()}</b>${aside>0.01?` · <b class="pos">${fmt(aside)}${cur()} au coffre</b> (au-delà du Kelly, ça ne doit plus rouler)`:''}
+    <br>p estimée ${fmt(p*100,0)}%${est.effN>=5?` (${est.ctxTxt})`:' (proba marché — pas assez d’historique)'} · si gagné : ${fmt(play*o)}${cur()} en jeu</div>`;
+}
+function startLadder(){
+  const t=pfr(val('ld2_ticket'));
+  if(!(t>=MIN_STAKE)){markErr('ld2_ticket',1);toast('Ticket invalide (min '+fmt(MIN_STAKE)+cur()+')');return;}
+  if(t>currentCapital()*0.05)toast('⚠ Ticket au-dessus de 5% du capital — agressif');
+  DB.ladders=DB.ladders||[];
+  DB.ladders.push({id:uid(),bankrollId:DB.activeId,ticket:t,coffre:0,enJeu:t,steps:[],status:'open',startedAt:Date.now()});
+  save();renderLadder();
+}
+function ladderResult(won){
+  const L=openLadder();if(!L)return;
+  const o=pfr(val('ld2_odds'));
+  if(!(o>=1.2)){markErr('ld2_odds',1);toast('Entre la cote du palier');return;}
+  const play=Math.max(MIN_STAKE,Math.min(L.enJeu,pfr(val('ld2_play'))||L.enJeu));
+  L.coffre+=L.enJeu-play;
+  L.steps.push({o,play:Math.round(play*100)/100,won:!!won});
+  if(won){L.enJeu=Math.round(play*o*100)/100;save();renderLadder();toast(`Palier ${L.steps.length} gagné — ${fmt(L.enJeu)}${cur()} en jeu`);}
+  else{L.enJeu=0;L.status='lost';save();renderLadder();
+    toast(L.coffre>0?`Montante finie — ${fmt(L.coffre)}${cur()} sauvés au coffre`:'Montante perdue — le ticket était calibré pour ça');}
+}
+function cashLadder(){
+  const L=openLadder();if(!L)return;
+  L.coffre=Math.round((L.coffre+L.enJeu)*100)/100;L.enJeu=0;L.status='cashed';
+  save();renderLadder();toast(`Encaissé : ${fmt(L.coffre)}${cur()} (ticket ${fmt(L.ticket)}${cur()})`);
+}
 /* Montante gagnante (laisser rouler) : traitée comme UN pari composite.
    Ticket = Kelly progressif sur (proba^n, gain composé), take-profit optionnel à partir du palier 2. */
 function ladderCalc(){
@@ -1318,7 +1398,8 @@ function ladderCalc(){
 }
 function renderRising(){
   document.getElementById('tool-rising').innerHTML=`
-  <div class="tool" style="border-color:rgba(255,176,32,.4)"><h4>💡 Montante gagnante (laisser rouler)</h4>
+  <div id="ladderBox"></div>
+  <div class="tool" style="border-color:rgba(255,176,32,.4)"><h4>💡 Planificateur de montante</h4>
     <div class="desc">On laisse rouler les gains sur n paliers, take-profit en cours de route. Ticket calculé avec TA proba réelle (moteur contextuel).</div>
     <div class="field-row"><div style="flex:2"><label>Cote(s) — une seule ou liste</label><input class="num" id="ld_odds" type="text" inputmode="decimal" autocomplete="off" value="2.0" placeholder="2.0 ou 1.6, 1.8, 2.1" oninput="ladderCalc()"></div>
       <div><label>Paliers (si cote unique)</label><input class="num" id="ld_steps" type="text" inputmode="decimal" autocomplete="off" value="3" oninput="ladderCalc()"></div>
@@ -1333,7 +1414,7 @@ function renderRising(){
     <div class="field-row"><div><label>Profit cible / cycle</label><input class="num" id="r_target" type="number" inputmode="decimal" value="10" oninput="calcRising()"></div>
       <div><label>Nb paliers</label><input class="num" id="r_levels" type="number" inputmode="decimal" value="6" oninput="calcRising()"></div></div>
     <div class="out" id="r_out"></div></div>`;
-  ladderCalc();calcRising();
+  renderLadder();ladderCalc();calcRising();
 }
 function calcRising(){
   const bank=+val('r_bank'),odds=+val('r_odds'),target=+val('r_target'),levels=Math.min(15,+val('r_levels'));
@@ -1926,7 +2007,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v17 — Montante multi-cotes';
+const APP_VER='v18 — Suivi de montante en direct';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
