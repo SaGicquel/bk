@@ -1268,52 +1268,60 @@ function histoSvg(finals,start){const min=finals[0],max=finals[finals.length-1],
    Ticket = Kelly progressif sur (proba^n, gain composé), take-profit optionnel à partir du palier 2. */
 function ladderCalc(){
   const el=document.getElementById('ld_out');if(!el)return;
-  const o=pfr(val('ld_odds'))||0,n=Math.max(2,Math.min(6,Math.round(pfr(val('ld_steps'))||3)));
-  const tp=Math.max(0,Math.min(80,pfr(val('ld_tp'))||0))/100;
   const capital=currentCapital();
-  if(!(o>=1.2)||!(capital>0)){el.innerHTML='<div class="muted">Cote ≥ 1.20 requise.</div>';return;}
-  const est=estimateP(o,{sport:val('ld_sport'),market:val('ld_market')});
-  const proven=est.effN>=5;
-  const p=proven?est.p:est.p0; // sans preuve : proba implicite du marché (prudent)
-  // Paliers avec take-profit (du palier 2 au palier n-1)
+  const tp=Math.max(0,Math.min(80,pfr(val('ld_tp'))||0))/100;
+  // Cotes : une seule (répétée sur n paliers) OU liste "1.6, 1.8, 2.1, 2.2"
+  let odds=String(val('ld_odds')).split(/[,;]/).map(x=>pfr(x)).filter(x=>x>=1.2);
+  if(!odds.length||!(capital>0)){el.innerHTML='<div class="muted">Entre une cote (≥ 1.20) ou une liste : 1.6, 1.8, 2.1…</div>';return;}
+  if(odds.length===1){const n0=Math.max(2,Math.min(8,Math.round(pfr(val('ld_steps'))||3)));odds=Array(n0).fill(odds[0]);}
+  const n=odds.length;
+  const ctx={sport:val('ld_sport'),market:val('ld_market')};
+  // Proba par palier via le moteur contextuel (proba marché si pas assez d'historique)
+  const ps=odds.map(o=>{const est=estimateP(o,ctx);return {o,est,proven:est.effN>=5,p:est.effN>=5?est.p:1/o};});
+  // Simulation des paliers avec take-profit (du palier 2 à n-1)
   let ride=1;const steps=[];
-  for(let i=1;i<=n;i++){
-    const winAmt=ride*o;
-    const keep=(i>=2&&i<n)?tp*ride*(o-1):0;
-    steps.push({i,ride,winAmt,keep});
-    ride=winAmt-keep;
-  }
+  ps.forEach((x,idx)=>{const i=idx+1;
+    const winAmt=ride*x.o;
+    const keep=(i>=2&&i<n)?tp*ride*(x.o-1):0;
+    steps.push({i,o:x.o,p:x.p,proven:x.proven,ride,winAmt,keep});
+    ride=winAmt-keep;});
   const fullBank=steps.reduce((a,s)=>a+s.keep,0);
   const fullFinal=steps[n-1].winAmt+fullBank;
-  // EV exacte (énumération des points d'échec, banked conservé)
-  let ev=0;
+  // EV exacte avec proba propre à chaque palier
+  let q=1;ps.forEach(x=>q*=x.p);
+  let ev=0,surv=1;
   for(let k=0;k<n;k++){
     const bk=steps.slice(0,k).reduce((a,s)=>a+s.keep,0);
-    ev+=Math.pow(p,k)*(1-p)*(bk-1);
+    ev+=surv*(1-ps[k].p)*(bk-1);
+    surv*=ps[k].p;
   }
-  ev+=Math.pow(p,n)*(fullFinal-1);
-  // Ticket : Kelly progressif sur le pari composite
-  const q=Math.pow(p,n),O=fullFinal;
-  const fK=(q*O-1)/(O-1);
-  const frac=0.25+0.25*Math.min(1,est.effN/50);
+  ev+=q*(fullFinal-1);
+  // Ticket : Kelly progressif sur le composite, preuve = le palier le MOINS documenté
+  const effN=Math.min(...ps.map(x=>x.est.effN));
+  const fK=(q*fullFinal-1)/(fullFinal-1);
+  const frac=0.25+0.25*Math.min(1,effN/50);
   const ticket=Math.max(MIN_STAKE,Math.min(capital*0.05,capital*Math.max(0,fK)*frac));
-  const rows=steps.map(s=>`<tr><td>${s.i}</td><td class="num">${fmt(s.ride*ticket)}</td><td class="num">${fmt(s.winAmt*ticket)}</td><td class="num">${s.keep?fmt(s.keep*ticket):'—'}</td></tr>`).join('');
+  const expo=steps[n-1].ride; // multiple du ticket en jeu au dernier palier
+  const rows=steps.map(s=>`<tr><td>${s.i}</td><td class="num">${fmt(s.o,2)}</td><td class="num">${fmt(s.p*100,0)}%${s.proven?'':'*'}</td><td class="num">${fmt(s.ride*ticket)}</td><td class="num">${fmt(s.winAmt*ticket)}</td><td class="num">${s.keep?fmt(s.keep*ticket):'—'}</td></tr>`).join('');
+  const allProven=ps.every(x=>x.proven);
   el.innerHTML=`
     ${fK<=0?`<div class="advise warn" style="margin-bottom:10px">⚠ Sans edge sur ce contexte, chaque palier paie la marge du bookmaker : montante déconseillée ici.</div>`:''}
+    ${n>=5?`<div class="advise ${n>=6?'warn':''}" style="margin-bottom:10px">${n>=6?'⚠ ':''}${n} paliers : proba de réussite ${fmt(q*100,1)}% (≈ 1 tentative gagnante sur ${fmt(1/Math.max(q,0.0001),0)}) et l'erreur d'estimation se COMPOSE à chaque palier — l'espérance affichée est très incertaine. Take-profit ≥ 40% fortement conseillé, et au dernier palier tu auras ${fmt(expo,1)}× ton ticket en jeu sur un seul match.</div>`:''}
     <div class="big ${fK>0?'pos':'neg'}">${fmt(ticket)}${cur()} <span style="font-size:13px;font-weight:400" class="muted">ticket de départ conseillé</span></div>
-    <table class="an" style="margin-top:10px"><thead><tr><th>Palier</th><th>En jeu</th><th>Si gagné</th><th>Mis de côté</th></tr></thead><tbody>${rows}</tbody></table>
+    <table class="an" style="margin-top:10px"><thead><tr><th>Palier</th><th>Cote</th><th>p</th><th>En jeu</th><th>Si gagné</th><th>De côté</th></tr></thead><tbody>${rows}</tbody></table>
     <table class="an" style="margin-top:8px"><tbody>
-      <tr><td>Proba de tout gagner</td><td class="num">${fmt(q*100,1)}%${proven?` (p palier ${fmt(p*100,0)}% — ton historique : ${est.ctxTxt})`:` (p palier ${fmt(p*100,0)}% — proba marché, pas assez d’historique sur ce contexte)`}</td></tr>
+      <tr><td>Proba de tout gagner</td><td class="num">${fmt(q*100,1)}% (≈ 1 sur ${fmt(1/Math.max(q,0.0001),0)} tentatives)</td></tr>
       <tr><td>Gain si complet</td><td class="num pos">${fmt(fullFinal*ticket)}${cur()} (×${fmt(fullFinal,1)})</td></tr>
+      <tr><td>Sécurisé si échec au dernier palier</td><td class="num">${fmt(fullBank*ticket)}${cur()}</td></tr>
       <tr><td>Espérance du ticket</td><td class="num ${ev>0?'pos':'neg'}">${signed(ev*ticket)}${cur()} (${signed(ev*100,0)}%)</td></tr></tbody></table>
-    <div class="muted" style="font-size:12px;margin-top:10px">Règles : paliers UNIQUEMENT dans ta zone prouvée · 3-4 paliers max (au-delà, l'exposition dépasse tout Kelly) · budget 3 tickets max en parallèle · stop après 6 échecs consécutifs (${fmt(6*ticket)}${cur()}). Ni 20 € ni des centimes : le ticket est un Kelly sur le pari composite.</div>`;
+    <div class="muted" style="font-size:12px;margin-top:10px">${allProven?'':'* proba marché (pas assez d’historique sur ce contexte/cote). '}Règles : paliers dans ta zone prouvée · budget 3 tickets en parallèle · stop après 6 échecs consécutifs (${fmt(6*ticket)}${cur()}).</div>`;
 }
 function renderRising(){
   document.getElementById('tool-rising').innerHTML=`
   <div class="tool" style="border-color:rgba(255,176,32,.4)"><h4>💡 Montante gagnante (laisser rouler)</h4>
     <div class="desc">On laisse rouler les gains sur n paliers, take-profit en cours de route. Ticket calculé avec TA proba réelle (moteur contextuel).</div>
-    <div class="field-row"><div><label>Cote / palier</label><input class="num" id="ld_odds" type="text" inputmode="decimal" autocomplete="off" value="2.0" oninput="ladderCalc()"></div>
-      <div><label>Paliers (2-6)</label><input class="num" id="ld_steps" type="text" inputmode="decimal" autocomplete="off" value="3" oninput="ladderCalc()"></div>
+    <div class="field-row"><div style="flex:2"><label>Cote(s) — une seule ou liste</label><input class="num" id="ld_odds" type="text" inputmode="decimal" autocomplete="off" value="2.0" placeholder="2.0 ou 1.6, 1.8, 2.1" oninput="ladderCalc()"></div>
+      <div><label>Paliers (si cote unique)</label><input class="num" id="ld_steps" type="text" inputmode="decimal" autocomplete="off" value="3" oninput="ladderCalc()"></div>
       <div><label>Take-profit %</label><input class="num" id="ld_tp" type="text" inputmode="decimal" autocomplete="off" value="30" oninput="ladderCalc()"></div></div>
     <div class="field-row"><div><label>Sport</label><select id="ld_sport" onchange="ladderCalc()">${recentVals('sport',SPORTS).map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
       <div><label>Marché (optionnel)</label><input id="ld_market" autocomplete="off" placeholder="ex : Buteur" oninput="ladderCalc()"></div></div>
@@ -1918,7 +1926,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v16 — Montante gagnante';
+const APP_VER='v17 — Montante multi-cotes';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
