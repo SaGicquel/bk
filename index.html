@@ -329,6 +329,14 @@ function load(){
 }
 function migrate(d){if(!d.customFields)d.customFields=[];if(!d.transactions)d.transactions=[];if(!d.ladders)d.ladders=[];
   (d.bankrolls||[]).forEach(b=>{if(b.archived===undefined)b.archived=false;if(!b.oddsFormat)b.oddsFormat='decimal';});
+  // Harmonisation one-shot : catégories/compétitions/sports canoniques (originaux gardés dans cat0/comp0)
+  if(!d._canonV){(d.bets||[]).forEach(b=>{
+    const c=canonCat(b.category||'');if(b.category&&c!==String(b.category).trim())b.cat0=b.category;
+    b.category=c;
+    const k=canonComp(b.competition||'');if(b.competition&&k!==String(b.competition).trim())b.comp0=b.competition;
+    b.competition=k;
+    b.sport=canonSport(b.sport||'');
+  });d._canonV=1;}
   return d;}
 function save(){DB._updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(DB));cloudQueue();updateBadge();}
 // Badge sur l'icône de l'app (PWA iOS/Android) : nombre de paris en cours
@@ -348,7 +356,7 @@ const BASE_BOOKMAKERS=['Winamax','Betclic','Unibet','ParionsSport','PMU','Betsso
 function bookmakerList(){return [...new Set([...(DB.bankrolls||[]).map(b=>b.name).filter(Boolean),...BASE_BOOKMAKERS])];}
 // Les marches les plus populaires par sport (foot & basket en priorite)
 const BET_MARKETS={
-  'Football':['1N2 (Résultat)','Double chance','Plus/Moins 2.5 buts','Les deux équipes marquent (BTTS)','Handicap asiatique','Score exact','Mi-temps / Fin de match','Buteur','Plus/Moins corners','Cartons'],
+  'Football':['Buteur','Score exact','Plus/Moins buts','Les deux équipes marquent','Penalty','But de la tête','Passe décisive','Joueur décisif','Double chance','Vainqueur / 1N2','Qualification','Cote boostée'],
   'Basket':['Vainqueur (Money line)','Handicap','Plus/Moins points','Points d\'un joueur','Rebonds / Passes joueur','Vainqueur 1ère mi-temps','Plus/Moins par équipe','Vainqueur quart-temps','Écart de points','Paris combinés joueur'],
   'Tennis':['Vainqueur du match','Handicap jeux','Plus/Moins jeux','Score en sets','Vainqueur 1er set','Tie-break (oui/non)','Nombre de sets','Jeux pairs/impairs'],
   'Rugby':['Vainqueur','Handicap','Plus/Moins points','Première équipe à marquer','Plus/Moins essais','Vainqueur mi-temps','Score exact mi-temps'],
@@ -656,7 +664,7 @@ function applyBulkEdit(){
   const st=val('be_status'),sp=val('be_sport').trim(),co=val('be_comp').trim(),bo=val('be_book').trim(),ti=val('be_tip').trim(),ca=val('be_cat').trim(),pm=val('be_promo');
   DB.bets.forEach(b=>{if(!selectedBets.has(b.id))return;
     if(st&&['single','lay'].includes(b.betType||'single'))b.status=st;
-    if(sp)b.sport=sp;if(co)b.competition=co;if(bo)b.bookmaker=bo;if(ti)b.tipster=ti;if(ca)b.category=ca;
+    if(sp)b.sport=canonSport(sp);if(co)b.competition=canonComp(co);if(bo)b.bookmaker=bo;if(ti)b.tipster=ti;if(ca)b.category=canonCat(ca);
     if(pm!=='')b.isPromo=pm==='1';});
   save();selectedBets.clear();selectMode=false;document.getElementById('fab').style.display='block';renderAll();closeModal();toast('Paris modifiés');
 }
@@ -730,6 +738,47 @@ function setInput(id,v){const e=document.getElementById(id);if(e){e.value=v;e.cl
       lissage bayésien vers la proba implicite + plafond anti petits échantillons, puis ¼ Kelly.
    3) La reco finale est bornée : jamais > 5% du capital, jamais > 2,5× la base sécurité. */
 const MIN_STAKE=0.10; // mise minimum bookmaker
+/* ===== Canonisation des données (source unique de vérité pour stats & conseil) ===== */
+function fold(s){return (s==null?'':String(s)).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
+function canonCat(raw){
+  const c=fold(raw);
+  if(!c)return'';
+  if(c.includes('freebet'))return'Conversion freebet';
+  if(c.includes('boost'))return'Cote boostée';
+  if(c.includes('score exact'))return'Score exact';
+  if(c.includes(' et '))return'Marché combiné';
+  if(c.includes('penal'))return'Penalty';
+  if(c.includes('tete'))return'But de la tête';
+  if(c.includes('buteur'))return'Buteur';
+  if(c.includes('decisif')||c.includes('but ou passe'))return'Joueur décisif';
+  if(c.includes('passe'))return'Passe décisive';
+  if(c.includes('btts')||c.includes('marquent'))return'Les deux équipes marquent';
+  if(/(plus|moins|over|under|\d[.,]5)/.test(c)||c.includes('nombre de but')||c.includes('periode')||/^\d+ ?but/.test(c))return'Plus/Moins buts';
+  if(c.includes('double chance'))return'Double chance';
+  if(c.includes('qualification'))return'Qualification';
+  if(c.includes('podium'))return'Podium';
+  if(['vainqueur','1n2','resultat','match nul','winner','money'].some(x=>c.includes(x)))return'Vainqueur / 1N2';
+  if(c.includes('combin'))return'Marché combiné';
+  if(c==='je sais plus'||c==='erreur')return'Autre';
+  return String(raw).trim();
+}
+function canonComp(raw){ // table interne : appelable dès migrate() au chargement (pas de TDZ)
+  const M={'coupe du monde':'Coupe du Monde','coupe du monde 2026':'Coupe du Monde',
+  'ligue lettonie':'Ligue Lettonie','ligapro serie a':'LigaPro (Équateur)','ligue equateur':'LigaPro (Équateur)',
+  'international friendly':'Match amical','international match':'Match amical','match amical clubs':'Match amical','match amical':'Match amical',
+  'ligue suede':'Ligue Suède','suede - svenska cupen':'Svenska Cupen','svenska cupen':'Svenska Cupen',
+  'ligue islande':'Ligue Islande','ligue irlande':'Ligue Irlande','estonie':'Ligue Estonie','ligue estonie':'Ligue Estonie',
+  'uefa europa conference league':'Conference League','uefa europa conference league qualification':'Conference League',
+  'ligue europa conference':'Conference League','conference league':'Conference League',
+  'ligue des champions':'Ligue des Champions','champions league':'Ligue des Champions'};
+  return M[fold(raw)]||String(raw==null?'':raw).trim();}
+function canonSport(raw){
+  const m={'football':'Football','foot':'Football','soccer':'Football','tennis':'Tennis','cyclisme':'Cyclisme',
+    'basket':'Basket','basketball':'Basket','rugby':'Rugby','handball':'Handball','esport':'Esport','mma':'MMA','hockey':'Hockey'};
+  const f=fold(raw);if(!f)return'';
+  const s=String(raw).trim();
+  return m[f]||s.charAt(0).toUpperCase()+s.slice(1);
+}
 // Normalise le type de pari (texte libre) en famille de marché comparable
 function normMarket(c){
   c=(c||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -980,7 +1029,7 @@ function pfr(v){return parseFloat(String(v??'').replace(',','.'));}
 function markErr(id,on){const e=document.getElementById(id);if(e)e.classList.toggle('err',!!on);}
 function saveBet(keepOpen){
   const common={placedAt:val('f_date'),closingOdds:pfr(val('f_closing'))||null,
-    category:val('f_cat').trim(),sport:val('f_sport').trim(),competition:val('f_comp').trim(),bookmaker:val('f_book').trim(),tipster:val('f_tip').trim(),
+    category:canonCat(val('f_cat')),sport:canonSport(val('f_sport')),competition:canonComp(val('f_comp')),bookmaker:val('f_book').trim(),tipster:val('f_tip').trim(),
     note:val('f_note').trim(),isFreebet:chk('f_fb'),isLive:chk('f_live'),isPromo:chk('f_promo'),
     customFields:Object.fromEntries((DB.customFields||[]).map(f=>[f,(document.querySelector(`[data-cf="${cssesc(f)}"]`)?.value||'').trim()]))};
   let data;
@@ -1838,7 +1887,7 @@ const AI_PROMPT=`Tu extrais des paris sportifs depuis des captures d'écran d'ap
 Retourne un tableau JSON, un élément par pari visible (même partiellement).
 Champs :
 - match : les équipes ou joueurs, ex "Brésil - Norvège".
-- selection : le TYPE de marché uniquement, court et générique, ex "Score exact", "Buteur", "Plus/Moins 2.5 buts", "1N2 (Résultat)", "Double chance", "Les deux équipes marquent (BTTS)". Ne recopie PAS le détail (pas la liste des scores, pas le nom du buteur).
+- selection : le TYPE de marché, choisi EXACTEMENT parmi cette liste : "Score exact", "Buteur", "Passe décisive", "Joueur décisif", "Plus/Moins buts", "Les deux équipes marquent", "Penalty", "But de la tête", "Double chance", "Vainqueur / 1N2", "Qualification", "Cote boostée", "Marché combiné" (pour les paris "X et Y"), "Conversion freebet". Si aucun ne correspond, le terme court le plus proche. Ne recopie JAMAIS le détail (ni liste de scores, ni nom de joueur).
 - detail : le détail précis de la sélection, ex "Yago Cariello" pour un buteur, ou la liste des scores pour un score exact. "" si rien.
 - odds : cote décimale en nombre.
 - stake : mise en nombre, sans le symbole €.
@@ -1925,8 +1974,8 @@ function importAiBets(){
     DB.bets.push({id:uid(),bankrollId:DB.activeId,createdAt:Date.now(),betType:'single',
       stake:stake||0,odds:odds||1,status:g(i,'status')||'pending',
       placedAt:g(i,'date')||new Date().toISOString().slice(0,10),
-      sport:g(i,'sport'),competition:g(i,'competition'),bookmaker:(aiParsed[i].bookmaker||'').trim(),
-      category:g(i,'selection'),tipster:'',note:[g(i,'match'),g(i,'detail')].filter(Boolean).join(' — '),
+      sport:canonSport(g(i,'sport')),competition:canonComp(g(i,'competition')),bookmaker:(aiParsed[i].bookmaker||'').trim(),
+      category:canonCat(g(i,'selection')),tipster:'',note:[g(i,'match'),g(i,'detail')].filter(Boolean).join(' — '),
       isFreebet:false,isLive:false,isPromo:!!(pEl&&pEl.checked),closingOdds:null,customFields:{}});
     added++;
   });
@@ -2009,7 +2058,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v19 — Analyse unifiee multi-bookmakers';
+const APP_VER='v20 — Donnees harmonisees';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
