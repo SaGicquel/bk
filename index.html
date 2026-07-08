@@ -768,12 +768,15 @@ function adviseStake(odds,ctx){
     else if(sport&&bs===sport)lots[1].push(b);
     else lots[2].push(b);
   });
-  const K=[1,0.4,0.15],M=20;
+  // Plafonds par niveau : un sport jamais joué ne peut pas hériter de l'edge d'un autre sport
+  // (validé en walk-forward : Brier 0.2043 vs 0.2074 marché ; sans plafond le foot "fuyait" vers le tennis)
+  const K=[1,0.4,0.15],CAPS=[Infinity,60,25],M=20;
   let num=0,den=M,effN=0;const parts=[];
   lots.forEach((L,li)=>{
     let W=0,E=0;
     L.forEach(b=>{const o=betOdds(b);const k=1/(1+2*Math.abs(Math.log(o/odds)));
       W+=k;E+=k*((isWin(b)?1:0)-1/o);});
+    if(W>CAPS[li]){E*=CAPS[li]/W;W=CAPS[li];}
     if(W>0.5){num+=K[li]*E;den+=K[li]*W;effN+=K[li]*W;parts.push({li,n:L.length,exc:E/W});}
   });
   const excess=num/den;
