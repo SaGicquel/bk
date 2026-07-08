@@ -753,10 +753,8 @@ function normMarket(c){
    Chaque pari est comparé à SA proba implicite (surperformance en points de proba, comparable
    entre cotes) et pondéré par un noyau de similarité de cote. Prior : 20 pseudo-paris à edge nul.
    Sans historique dans le contexte → mise de base sécurité, et le conseil le dit. */
-function adviseStake(odds,ctx){
-  const capital=currentCapital();if(!(capital>0)||!(odds>=1.01))return null;
-  const cap5=capital*0.05;
-  const base=Math.max(MIN_STAKE,Math.min(cap5,capital*0.02/(odds-1)));
+// Estimation contextuelle de la proba (coeur du moteur v4) — réutilisée par la mise conseillée et la montante
+function estimateP(odds,ctx){
   const p0=1/odds;
   const sport=(ctx&&ctx.sport||'').trim().toLowerCase();
   const mkt=normMarket(ctx&&ctx.market||'');
@@ -769,7 +767,6 @@ function adviseStake(odds,ctx){
     else lots[2].push(b);
   });
   // Plafonds par niveau : un sport jamais joué ne peut pas hériter de l'edge d'un autre sport
-  // (validé en walk-forward : Brier 0.2043 vs 0.2074 marché ; sans plafond le foot "fuyait" vers le tennis)
   const K=[1,0.4,0.15],CAPS=[Infinity,60,25],M=20;
   let num=0,den=M,effN=0;const parts=[];
   lots.forEach((L,li)=>{
@@ -779,13 +776,19 @@ function adviseStake(odds,ctx){
     if(W>CAPS[li]){E*=CAPS[li]/W;W=CAPS[li];}
     if(W>0.5){num+=K[li]*E;den+=K[li]*W;effN+=K[li]*W;parts.push({li,n:L.length,exc:E/W});}
   });
-  const excess=num/den;
-  const p=Math.max(0.005,Math.min(p0*2.5,0.95,p0+excess));
-  const f=(p*odds-1)/(odds-1);
-  // Description du contexte utilisé
+  const p=Math.max(0.005,Math.min(p0*2.5,0.95,p0+num/den));
   const lbl=['même sport + marché','même sport','autres paris'];
   const ctxTxt=parts.length?parts.map(x=>`${x.n} paris (${lbl[x.li]}) ${x.exc>=0?'+':''}${fmt(x.exc*100,0)} pts vs marché`).join(' · '):'aucun historique exploitable';
   const where=sport?`${ctx.sport}${mkt?' · '+mkt:''}`:'contexte non précisé';
+  return {p,p0,effN,ctxTxt,where,sport};
+}
+function adviseStake(odds,ctx){
+  const capital=currentCapital();if(!(capital>0)||!(odds>=1.01))return null;
+  const cap5=capital*0.05;
+  const base=Math.max(MIN_STAKE,Math.min(cap5,capital*0.02/(odds-1)));
+  const est=estimateP(odds,ctx);
+  const {p,p0,effN,ctxTxt,where,sport}=est;
+  const f=(p*odds-1)/(odds-1);
   if(!sport||effN<5){
     return {stake:base,txt:`Mise sécurité ${fmt(base/capital*100,2)}% du capital (viser +2% si gagné). `
       +(!sport?`Précise le sport pour un conseil basé sur ton historique.`
@@ -1261,8 +1264,60 @@ function histoSvg(finals,start){const min=finals[0],max=finals[finals.length-1],
     <div class="histo">${counts.map((c,i)=>{const v=min+(i+0.5)/bins*(max-min);
       return `<div class="bar" style="height:${c/mx*100}%;background:${v>=start?'var(--pos)':'var(--neg)'}"></div>`;}).join('')}</div>`;
 }
+/* Montante gagnante (laisser rouler) : traitée comme UN pari composite.
+   Ticket = Kelly progressif sur (proba^n, gain composé), take-profit optionnel à partir du palier 2. */
+function ladderCalc(){
+  const el=document.getElementById('ld_out');if(!el)return;
+  const o=pfr(val('ld_odds'))||0,n=Math.max(2,Math.min(6,Math.round(pfr(val('ld_steps'))||3)));
+  const tp=Math.max(0,Math.min(80,pfr(val('ld_tp'))||0))/100;
+  const capital=currentCapital();
+  if(!(o>=1.2)||!(capital>0)){el.innerHTML='<div class="muted">Cote ≥ 1.20 requise.</div>';return;}
+  const est=estimateP(o,{sport:val('ld_sport'),market:val('ld_market')});
+  const proven=est.effN>=5;
+  const p=proven?est.p:est.p0; // sans preuve : proba implicite du marché (prudent)
+  // Paliers avec take-profit (du palier 2 au palier n-1)
+  let ride=1;const steps=[];
+  for(let i=1;i<=n;i++){
+    const winAmt=ride*o;
+    const keep=(i>=2&&i<n)?tp*ride*(o-1):0;
+    steps.push({i,ride,winAmt,keep});
+    ride=winAmt-keep;
+  }
+  const fullBank=steps.reduce((a,s)=>a+s.keep,0);
+  const fullFinal=steps[n-1].winAmt+fullBank;
+  // EV exacte (énumération des points d'échec, banked conservé)
+  let ev=0;
+  for(let k=0;k<n;k++){
+    const bk=steps.slice(0,k).reduce((a,s)=>a+s.keep,0);
+    ev+=Math.pow(p,k)*(1-p)*(bk-1);
+  }
+  ev+=Math.pow(p,n)*(fullFinal-1);
+  // Ticket : Kelly progressif sur le pari composite
+  const q=Math.pow(p,n),O=fullFinal;
+  const fK=(q*O-1)/(O-1);
+  const frac=0.25+0.25*Math.min(1,est.effN/50);
+  const ticket=Math.max(MIN_STAKE,Math.min(capital*0.05,capital*Math.max(0,fK)*frac));
+  const rows=steps.map(s=>`<tr><td>${s.i}</td><td class="num">${fmt(s.ride*ticket)}</td><td class="num">${fmt(s.winAmt*ticket)}</td><td class="num">${s.keep?fmt(s.keep*ticket):'—'}</td></tr>`).join('');
+  el.innerHTML=`
+    ${fK<=0?`<div class="advise warn" style="margin-bottom:10px">⚠ Sans edge sur ce contexte, chaque palier paie la marge du bookmaker : montante déconseillée ici.</div>`:''}
+    <div class="big ${fK>0?'pos':'neg'}">${fmt(ticket)}${cur()} <span style="font-size:13px;font-weight:400" class="muted">ticket de départ conseillé</span></div>
+    <table class="an" style="margin-top:10px"><thead><tr><th>Palier</th><th>En jeu</th><th>Si gagné</th><th>Mis de côté</th></tr></thead><tbody>${rows}</tbody></table>
+    <table class="an" style="margin-top:8px"><tbody>
+      <tr><td>Proba de tout gagner</td><td class="num">${fmt(q*100,1)}%${proven?` (p palier ${fmt(p*100,0)}% — ton historique : ${est.ctxTxt})`:` (p palier ${fmt(p*100,0)}% — proba marché, pas assez d’historique sur ce contexte)`}</td></tr>
+      <tr><td>Gain si complet</td><td class="num pos">${fmt(fullFinal*ticket)}${cur()} (×${fmt(fullFinal,1)})</td></tr>
+      <tr><td>Espérance du ticket</td><td class="num ${ev>0?'pos':'neg'}">${signed(ev*ticket)}${cur()} (${signed(ev*100,0)}%)</td></tr></tbody></table>
+    <div class="muted" style="font-size:12px;margin-top:10px">Règles : paliers UNIQUEMENT dans ta zone prouvée · 3-4 paliers max (au-delà, l'exposition dépasse tout Kelly) · budget 3 tickets max en parallèle · stop après 6 échecs consécutifs (${fmt(6*ticket)}${cur()}). Ni 20 € ni des centimes : le ticket est un Kelly sur le pari composite.</div>`;
+}
 function renderRising(){
   document.getElementById('tool-rising').innerHTML=`
+  <div class="tool" style="border-color:rgba(255,176,32,.4)"><h4>💡 Montante gagnante (laisser rouler)</h4>
+    <div class="desc">On laisse rouler les gains sur n paliers, take-profit en cours de route. Ticket calculé avec TA proba réelle (moteur contextuel).</div>
+    <div class="field-row"><div><label>Cote / palier</label><input class="num" id="ld_odds" type="text" inputmode="decimal" autocomplete="off" value="2.0" oninput="ladderCalc()"></div>
+      <div><label>Paliers (2-6)</label><input class="num" id="ld_steps" type="text" inputmode="decimal" autocomplete="off" value="3" oninput="ladderCalc()"></div>
+      <div><label>Take-profit %</label><input class="num" id="ld_tp" type="text" inputmode="decimal" autocomplete="off" value="30" oninput="ladderCalc()"></div></div>
+    <div class="field-row"><div><label>Sport</label><select id="ld_sport" onchange="ladderCalc()">${recentVals('sport',SPORTS).map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
+      <div><label>Marché (optionnel)</label><input id="ld_market" autocomplete="off" placeholder="ex : Buteur" oninput="ladderCalc()"></div></div>
+    <div class="out" id="ld_out"></div></div>
   <div class="tool"><h4>Montante (rising) — récupération</h4>
     <div class="desc">Calcule la mise à chaque palier pour viser un profit cible, en récupérant les pertes précédentes.</div>
     <div class="field-row"><div><label>Capital départ</label><input class="num" id="r_bank" type="number" inputmode="decimal" value="100" oninput="calcRising()"></div>
@@ -1270,7 +1325,7 @@ function renderRising(){
     <div class="field-row"><div><label>Profit cible / cycle</label><input class="num" id="r_target" type="number" inputmode="decimal" value="10" oninput="calcRising()"></div>
       <div><label>Nb paliers</label><input class="num" id="r_levels" type="number" inputmode="decimal" value="6" oninput="calcRising()"></div></div>
     <div class="out" id="r_out"></div></div>`;
-  calcRising();
+  ladderCalc();calcRising();
 }
 function calcRising(){
   const bank=+val('r_bank'),odds=+val('r_odds'),target=+val('r_target'),levels=Math.min(15,+val('r_levels'));
@@ -1863,7 +1918,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v15 — Conseil contextuel sport/marche';
+const APP_VER='v16 — Montante gagnante';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
