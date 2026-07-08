@@ -758,7 +758,9 @@ function estimateP(odds,ctx){
   const p0=1/odds;
   const sport=(ctx&&ctx.sport||'').trim().toLowerCase();
   const mkt=normMarket(ctx&&ctx.market||'');
-  const all=activeBets().filter(b=>isSettled(b)&&!b.isFreebet&&!b.isPromo&&b.betType!=='lay'&&betOdds(b)>1.01);
+  // Historique GLOBAL (toutes bankrolls) : ton edge sur un marché ne dépend pas du bookmaker.
+  // Seule la MISE est dimensionnée sur le capital de la bankroll active.
+  const all=DB.bets.filter(b=>isSettled(b)&&!b.isFreebet&&!b.isPromo&&b.betType!=='lay'&&betOdds(b)>1.01);
   const lots=[[],[],[]];
   all.forEach(b=>{
     const bs=(b.sport||'').trim().toLowerCase(),bm=normMarket(b.category||'');
@@ -827,7 +829,7 @@ function updateAdvise(){
 let tmplList=[];
 function betTemplates(){
   const cnt={};
-  activeBets().slice(-200).forEach(b=>{
+  DB.bets.slice(-200).forEach(b=>{
     if((b.betType||'single')!=='single')return;
     const k=[b.sport||'',b.category||'',b.competition||'',b.bookmaker||''].join('|');
     if(k==='|||')return;
@@ -2007,7 +2009,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v18 — Suivi de montante en direct';
+const APP_VER='v19 — Analyse unifiee multi-bookmakers';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
