@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bk-cache-v22';
+const CACHE_NAME = 'bk-cache-v23';
 // Chemins relatifs au scope du service worker : fonctionne quel que soit le dossier de déploiement
 const APP_SHELL = [
   './',

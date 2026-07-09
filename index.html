@@ -1843,7 +1843,21 @@ setInterval(autoCloudBackup,30*60*1000);
 
 /* ===================== SCAN IA (Gemini — gratuit via Google AI Studio) ===================== */
 const GKEY='bk_gemini_key';
-const GMODEL='gemini-2.5-flash';
+const GMODEL_DEFAULT='gemini-flash-latest'; // alias Google : suit automatiquement le dernier modèle Flash
+function gemModel(){return localStorage.getItem('bk_gemini_model')||GMODEL_DEFAULT;}
+// Auto-réparation : si le modèle n'existe plus (404), on découvre les modèles dispo avec la clé et on mémorise
+async function resolveGemModel(){
+  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(gemKey())}&pageSize=200`);
+  if(!r.ok)throw new Error('Impossible de lister les modèles Gemini (HTTP '+r.status+')');
+  const j=await r.json();
+  const cand=(j.models||[])
+    .filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/flash/i.test(m.name)&&!/lite|8b|image|tts|live|audio|embed/i.test(m.name))
+    .map(m=>m.name.replace(/^models\//,''));
+  cand.sort().reverse(); // les versions les plus récentes d'abord
+  if(!cand.length)throw new Error('Aucun modèle Flash disponible avec cette clé');
+  localStorage.setItem('bk_gemini_model',cand[0]);
+  return cand[0];
+}
 function gemKey(){return localStorage.getItem(GKEY)||'';}
 let aiFiles=[],aiParsed=[];
 function openAiScan(){
@@ -1871,7 +1885,7 @@ function drawAiScan(){
       <input type="file" id="aiInput" accept="image/*" multiple style="display:none" onchange="aiAddFiles(this.files)">
       <div class="aithumbs" id="aiThumbs"></div>
       <div id="aiActions"></div>
-      <div class="muted" style="font-size:11px;margin-top:10px">Modèle ${GMODEL} · palier gratuit Google AI Studio ·
+      <div class="muted" style="font-size:11px;margin-top:10px">Modèle ${gemModel()} · palier gratuit Google AI Studio ·
         <span style="text-decoration:underline;cursor:pointer" onclick="localStorage.removeItem(GKEY);drawAiScan()">changer de clé</span></div>`;
   }
   h+=`<button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Fermer</button>`;
@@ -1926,9 +1940,14 @@ async function runAiScan(){
   try{
     const parts=[{text:AI_PROMPT}];
     for(const f of aiFiles)parts.push({inline_data:{mime_type:'image/jpeg',data:await fileToJpeg(f)}});
-    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GMODEL}:generateContent?key=${encodeURIComponent(gemKey())}`,
+    const call=model=>fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(gemKey())}`,
       {method:'POST',headers:{'Content-Type':'application/json'},
        body:JSON.stringify({contents:[{parts}],generationConfig:{response_mime_type:'application/json',response_schema:AI_SCHEMA,temperature:0}})});
+    let r=await call(gemModel());
+    if(r.status===404){ // modèle retiré par Google : découverte automatique du remplaçant
+      const m=await resolveGemModel();
+      r=await call(m);
+    }
     if(!r.ok){
       if(r.status===400||r.status===403)throw new Error('Clé API invalide ou expirée — vérifie-la sur aistudio.google.com');
       if(r.status===429)throw new Error('Quota gratuit atteint — réessaie dans une minute');
@@ -2099,7 +2118,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v22 — Combines au scan + mise min par bookmaker';
+const APP_VER='v23 — Scan IA auto-reparant';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
