@@ -328,7 +328,8 @@ function load(){
   return {bankrolls:[{id:uid(),name:'Bankroll principale',startingCapital:100,currency:'€'}],bets:[],activeId:null,customFields:[],transactions:[],ladders:[],settings:{}};
 }
 function migrate(d){if(!d.customFields)d.customFields=[];if(!d.transactions)d.transactions=[];if(!d.ladders)d.ladders=[];
-  (d.bankrolls||[]).forEach(b=>{if(b.archived===undefined)b.archived=false;if(!b.oddsFormat)b.oddsFormat='decimal';});
+  (d.bankrolls||[]).forEach(b=>{if(b.archived===undefined)b.archived=false;if(!b.oddsFormat)b.oddsFormat='decimal';
+    if(!b.minStake)b.minStake=String(b.name||'').toLowerCase().includes('betify')?0.5:0.1;});
   // Harmonisation one-shot : catégories/compétitions/sports canoniques (originaux gardés dans cat0/comp0)
   if(!d._canonV){(d.bets||[]).forEach(b=>{
     const c=canonCat(b.category||'');if(b.category&&c!==String(b.category).trim())b.cat0=b.category;
@@ -737,7 +738,8 @@ function setInput(id,v){const e=document.getElementById(id);if(e){e.value=v;e.cl
    2) Edge : uniquement si ≥ 10 paris réglés à cotes similaires (±30%). Proba estimée avec fort
       lissage bayésien vers la proba implicite + plafond anti petits échantillons, puis ¼ Kelly.
    3) La reco finale est bornée : jamais > 5% du capital, jamais > 2,5× la base sécurité. */
-const MIN_STAKE=0.10; // mise minimum bookmaker
+const MIN_STAKE=0.10; // plancher par défaut
+function minStakeBk(){const b=activeBankroll();return Math.max(0.01,+(b&&b.minStake)||MIN_STAKE);}
 /* ===== Canonisation des données (source unique de vérité pour stats & conseil) ===== */
 function fold(s){return (s==null?'':String(s)).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
 function canonCat(raw){
@@ -844,7 +846,7 @@ function estimateP(odds,ctx){
 function adviseStake(odds,ctx){
   const capital=currentCapital();if(!(capital>0)||!(odds>=1.01))return null;
   const cap5=capital*0.05;
-  const base=Math.max(MIN_STAKE,Math.min(cap5,capital*0.02/(odds-1)));
+  const base=Math.max(minStakeBk(),Math.min(cap5,capital*0.02/(odds-1)));
   const est=estimateP(odds,ctx);
   const {p,p0,effN,ctxTxt,where,sport}=est;
   const f=(p*odds-1)/(odds-1);
@@ -854,13 +856,13 @@ function adviseStake(odds,ctx){
       :`Trop peu d'historique en ${esc(where)} (preuve effective ${fmt(effN,1)}/5) — le conseil s'affinera avec tes paris.`)};
   }
   if(f<=0){
-    const half=Math.max(MIN_STAKE,base*0.5);
+    const half=Math.max(minStakeBk(),base*0.5);
     return {stake:half,cls:'warn',txt:`⚠ ${esc(where)} : historiquement perdant pour toi (${ctxTxt}). `
       +`Demi-mise sécurité — ou passe ton tour.`};
   }
   const frac=0.25+0.25*Math.min(1,effN/50);
   const kelly=Math.min(capital*0.08,capital*f*frac);
-  const stake=Math.max(MIN_STAKE,Math.min(kelly,base*3.5));
+  const stake=Math.max(minStakeBk(),Math.min(kelly,base*3.5));
   return {stake,txt:`Kelly progressif ${fmt(frac*100,0)}% (preuve ${fmt(effN,0)}/50, pondérée par contexte) = ${fmt(stake/capital*100,2)}% du capital. `
     +`Contexte ${esc(where)} : ${ctxTxt} · p retenue ${fmt(p*100,0)}% vs implicite ${fmt(p0*100,0)}%.`};
 }
@@ -1370,8 +1372,8 @@ function ladderStepAdvice(){
   const f=(p*o-1)/(o-1);
   const capital=currentCapital();
   const frac=0.25+0.25*Math.min(1,est.effN/50);
-  const kelly=Math.max(MIN_STAKE,Math.min(capital*0.08,capital*Math.max(0,f)*frac));
-  const play=Math.max(MIN_STAKE,Math.min(L.enJeu,f>0?kelly:Math.min(L.enJeu,capital*0.01)));
+  const kelly=Math.max(minStakeBk(),Math.min(capital*0.08,capital*Math.max(0,f)*frac));
+  const play=Math.max(minStakeBk(),Math.min(L.enJeu,f>0?kelly:Math.min(L.enJeu,capital*0.01)));
   const aside=Math.max(0,L.enJeu-play);
   const pl=document.getElementById('ld2_play');if(pl)pl.value=play.toFixed(2);
   el.innerHTML=`<div class="advise ${f<=0?'warn':''}">
@@ -1381,7 +1383,7 @@ function ladderStepAdvice(){
 }
 function startLadder(){
   const t=pfr(val('ld2_ticket'));
-  if(!(t>=MIN_STAKE)){markErr('ld2_ticket',1);toast('Ticket invalide (min '+fmt(MIN_STAKE)+cur()+')');return;}
+  if(!(t>=minStakeBk())){markErr('ld2_ticket',1);toast('Ticket invalide (min '+fmt(minStakeBk())+cur()+')');return;}
   if(t>currentCapital()*0.05)toast('⚠ Ticket au-dessus de 5% du capital — agressif');
   DB.ladders=DB.ladders||[];
   DB.ladders.push({id:uid(),bankrollId:DB.activeId,ticket:t,coffre:0,enJeu:t,steps:[],status:'open',startedAt:Date.now()});
@@ -1391,7 +1393,7 @@ function ladderResult(won){
   const L=openLadder();if(!L)return;
   const o=pfr(val('ld2_odds'));
   if(!(o>=1.2)){markErr('ld2_odds',1);toast('Entre la cote du palier');return;}
-  const play=Math.max(MIN_STAKE,Math.min(L.enJeu,pfr(val('ld2_play'))||L.enJeu));
+  const play=Math.max(minStakeBk(),Math.min(L.enJeu,pfr(val('ld2_play'))||L.enJeu));
   L.coffre+=L.enJeu-play;
   L.steps.push({o,play:Math.round(play*100)/100,won:!!won});
   if(won){L.enJeu=Math.round(play*o*100)/100;save();renderLadder();toast(`Palier ${L.steps.length} gagné — ${fmt(L.enJeu)}${cur()} en jeu`);}
@@ -1439,7 +1441,7 @@ function ladderCalc(){
   const effN=Math.min(...ps.map(x=>x.est.effN));
   const fK=(q*fullFinal-1)/(fullFinal-1);
   const frac=0.25+0.25*Math.min(1,effN/50);
-  const ticket=Math.max(MIN_STAKE,Math.min(capital*0.05,capital*Math.max(0,fK)*frac));
+  const ticket=Math.max(minStakeBk(),Math.min(capital*0.05,capital*Math.max(0,fK)*frac));
   const expo=steps[n-1].ride; // multiple du ticket en jeu au dernier palier
   const rows=steps.map(s=>`<tr><td>${s.i}</td><td class="num">${fmt(s.o,2)}</td><td class="num">${fmt(s.p*100,0)}%${s.proven?'':'*'}</td><td class="num">${fmt(s.ride*ticket)}</td><td class="num">${fmt(s.winAmt*ticket)}</td><td class="num">${s.keep?fmt(s.keep*ticket):'—'}</td></tr>`).join('');
   const allProven=ps.every(x=>x.proven);
@@ -1658,6 +1660,7 @@ function openBankrollModal(id){editingBkId=id||null;const b=id?DB.bankrolls.find
     <div class="field-row"><div><label>Capital de départ</label><input class="num" id="bk_cap" type="number" inputmode="decimal" value="${b?b.startingCapital:100}"></div>
       <div><label>Devise</label><select id="bk_cur">${CURRENCIES.map(([s,l])=>`<option value="${s}" ${(b?b.currency:'€')===s?'selected':''}>${l}</option>`).join('')}</select></div></div>
     <label>Objectif de capital (optionnel)</label><input class="num" id="bk_goal" type="number" inputmode="decimal" value="${b&&b.goal?b.goal:''}" placeholder="ex : 500 — barre de progression sur le tableau de bord">
+    <label>Mise minimum du bookmaker (${'€'})</label><input class="num" id="bk_min" type="number" inputmode="decimal" step="0.10" value="${b?(b.minStake||0.10):0.10}">
     <label>Affichage des cotes</label><div class="chips" id="bk_fmt">${[['decimal','Décimale'],['american','Américaine'],['fractional','Fractionnaire']].map(([v,l])=>`<div class="chip ${bkFmt===v?'sel':''}" data-f="${v}" onclick="pickOddsFmt('${v}')">${l}</div>`).join('')}</div>
     <div class="btn-row"><button class="btn primary" onclick="saveBankroll()">${id?'Enregistrer':'Créer'}</button></div>
     ${id?`<div class="btn-row"><button class="btn ghost" onclick="duplicateBankroll('${id}')">Dupliquer</button>
@@ -1666,7 +1669,9 @@ function openBankrollModal(id){editingBkId=id||null;const b=id?DB.bankrolls.find
     ${id&&DB.bankrolls.length>1?`<button class="btn danger" style="margin-top:10px" onclick="deleteBankroll('${id}')">Supprimer (et ses paris)</button>`:''}
     <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Annuler</button>`;openModal();}
 function saveBankroll(){const name=val('bk_name').trim()||'Bankroll',cap=+val('bk_cap')||0,c=val('bk_cur')||'€';
-  const upd={name,startingCapital:cap,currency:c,oddsFormat:bkFmt,goal:pfr(val('bk_goal'))||null};
+  let ms=pfr(val('bk_min'))||0.10;
+  if(Math.abs(ms-0.10)<0.001&&name.toLowerCase().includes('betify'))ms=0.5; // Betify : minimum 0,50€
+  const upd={name,startingCapital:cap,currency:c,oddsFormat:bkFmt,goal:pfr(val('bk_goal'))||null,minStake:ms};
   if(editingBkId)Object.assign(DB.bankrolls.find(b=>b.id===editingBkId),upd);
   else{const id=uid();DB.bankrolls.push({id,...upd,archived:false});DB.activeId=id;}
   save();renderAll();closeModal();toast('Bankroll enregistrée');}
@@ -1904,11 +1909,16 @@ Champs :
 - sport : ex "Football".
 - competition : DÉDUIS-LA de ta connaissance des équipes, elle n'est presque jamais affichée. Équipes nationales (Brésil, Norvège...) → compétition internationale plausible à la date donnée (ex "Coupe du Monde", "Ligue des Nations"). Clubs → championnat national du pays (ex Gwangju FC / Ulsan HD FC → "K League 1", Marseille / Lyon → "Ligue 1"). IMPORTANT : les libellés du bookmaker comme "Penalty World", "MyMatch", "Défi", "Boost" sont des fonctionnalités marketing, JAMAIS des compétitions — ne les utilise pas. Si vraiment indéterminable : "".
 - bookmaker : si identifiable au design/logo, sinon "".
+- betType : "single" ou "combo". Un COMBINÉ = plusieurs sélections dans UN SEUL pari, avec UNE mise et une cote totale (étiquette "Combiné", "2 sélections", etc.). Ne crée JAMAIS plusieurs paris séparés pour un combiné : retourne UN élément avec betType "combo", odds = la cote TOTALE, et selections = la liste des sélections, chacune avec label (court : "Match : choix", ex "PSG - OM : PSG gagne"), odds (cote de LA sélection si affichée, sinon 0), status ("won" coche verte, "lost" croix rouge, sinon "pending").
 Attention : "Gains 7,00 €" est le retour total, pas la mise. "Gains potentiels" = pari en cours. Ne confonds pas cote, score et heure du match.`;
 const AI_SCHEMA={type:'ARRAY',items:{type:'OBJECT',properties:{
   match:{type:'STRING'},selection:{type:'STRING'},detail:{type:'STRING'},odds:{type:'NUMBER'},stake:{type:'NUMBER'},
   status:{type:'STRING',enum:['won','lost','pending','void']},date:{type:'STRING'},
-  sport:{type:'STRING'},competition:{type:'STRING'},bookmaker:{type:'STRING'}},
+  sport:{type:'STRING'},competition:{type:'STRING'},bookmaker:{type:'STRING'},
+  betType:{type:'STRING',enum:['single','combo']},
+  selections:{type:'ARRAY',items:{type:'OBJECT',properties:{
+    label:{type:'STRING'},odds:{type:'NUMBER'},status:{type:'STRING',enum:['won','lost','pending','void']}},
+    required:['label']}}},
   required:['odds','stake','status']}};
 async function runAiScan(){
   if(!aiFiles.length)return;
@@ -1946,9 +1956,11 @@ function drawAiPreview(){
     const badge=b.status==='won'?'b-won':b.status==='lost'?'b-lost':b.status==='void'?'b-void':'b-pending';
     // Détection auto Penalty World : score exact + cote >= 3 + mise exactement 5€
     const autoPromo=/score\s*exact/i.test(b.selection||'')&&(+b.odds>=3)&&Math.abs((+b.stake)-5)<0.001;
+    const isCombo=b.betType==='combo'&&(b.selections||[]).length>=2;
     h+=`<div class="aicard">
       <div class="aihead"><input type="checkbox" checked data-ai-ck="${i}">
-        <span class="ttl">${esc(b.match||b.selection||'Pari '+(i+1))}</span>
+        <span class="ttl">${esc(isCombo?('Combiné ('+b.selections.length+' sélections)'):(b.match||b.selection||'Pari '+(i+1)))}</span>
+        ${isCombo?'<span class="badge b-type">Combiné</span>':''}
         ${autoPromo?'<span class="badge b-type">DÉFI auto</span>':''}
         <span class="badge ${badge}">${{won:'Gagné',lost:'Perdu',pending:'En cours',void:'Annulé'}[b.status]||'?'}</span></div>
       <div class="grid2">
@@ -1963,7 +1975,14 @@ function drawAiPreview(){
         <div><label>Compétition</label><input data-ai="${i}" data-f="competition" value="${esc(b.competition||'')}"></div>
         <div style="grid-column:1/-1"><label style="display:flex;align-items:center;gap:7px;text-transform:none;font-size:13px;color:var(--text)">
           <input type="checkbox" data-ai="${i}" data-f="promo" ${autoPromo?'checked':''} style="width:auto;accent-color:var(--accent)"> Défi/Promo (exclu du calcul d'edge)</label></div>
-      </div></div>`;
+      </div>
+      ${isCombo?`<div style="margin-top:8px"><label>Sélections du combiné</label>
+        ${(b.selections||[]).map((s,j)=>`<div class="field-row" style="gap:6px;margin-top:6px">
+          <input style="flex:2" data-ai-leg="${i}" data-j="${j}" data-lf="label" value="${esc(s.label||'')}" placeholder="Match : choix">
+          <input class="num" style="flex:1" data-ai-leg="${i}" data-j="${j}" data-lf="odds" type="text" inputmode="decimal" value="${s.odds||''}" placeholder="cote">
+          <select style="flex:1" data-ai-leg="${i}" data-j="${j}" data-lf="status">${[['won','G'],['lost','P'],['pending','?'],['void','A']].map(([v,l])=>`<option value="${v}" ${s.status===v?'selected':''}>${l}</option>`).join('')}</select>
+        </div>`).join('')}</div>`:''}
+      </div>`;
   });
   h+=`<div class="btn-row"><button class="btn primary" onclick="importAiBets()">Importer les paris cochés</button></div>
     <button class="btn ghost" style="margin-top:8px" onclick="drawAiScan()">Rescanner</button>
@@ -1979,12 +1998,26 @@ function importAiBets(){
     const stake=pfr(g(i,'stake')),odds=pfr(g(i,'odds'));
     if(!(stake>0)&&!(odds>0))return;
     const pEl=document.querySelector(`[data-ai="${i}"][data-f="promo"]`);
-    DB.bets.push({id:uid(),bankrollId:DB.activeId,createdAt:Date.now(),betType:'single',
-      stake:stake||0,odds:odds||1,status:g(i,'status')||'pending',
+    const common={id:uid(),bankrollId:DB.activeId,createdAt:Date.now(),
+      stake:stake||0,status:g(i,'status')||'pending',
       placedAt:g(i,'date')||new Date().toISOString().slice(0,10),
       sport:canonSport(g(i,'sport')),competition:canonComp(g(i,'competition')),bookmaker:(aiParsed[i].bookmaker||'').trim(),
       category:canonCat(g(i,'selection')),tipster:'',note:[g(i,'match'),g(i,'detail')].filter(Boolean).join(' — '),
-      isFreebet:false,isLive:false,isPromo:!!(pEl&&pEl.checked),closingOdds:null,customFields:{}});
+      isFreebet:false,isLive:false,isPromo:!!(pEl&&pEl.checked),closingOdds:null,customFields:{}};
+    const legEls=[...document.querySelectorAll(`[data-ai-leg="${i}"][data-lf="label"]`)];
+    if(aiParsed[i].betType==='combo'&&legEls.length>=2){
+      // reconstruit les sélections depuis l'aperçu ; cotes manquantes réparties pour retrouver la cote totale
+      const legs=legEls.map(el=>{const j=el.dataset.j;
+        const gl=f=>{const e=document.querySelector(`[data-ai-leg="${i}"][data-j="${j}"][data-lf="${f}"]`);return e?e.value:'';};
+        return {label:gl('label').trim(),odds:pfr(gl('odds'))||0,status:gl('status')||'pending'};});
+      const known=legs.filter(l=>l.odds>0).reduce((a,l)=>a*l.odds,1);
+      const missing=legs.filter(l=>!(l.odds>0)).length;
+      if(missing&&odds>0&&known>0){const fill=Math.pow(odds/known,1/missing);legs.forEach(l=>{if(!(l.odds>0))l.odds=Math.round(fill*100)/100;});}
+      DB.bets.push({...common,betType:'combo',odds:odds||comboOdds(legs),selections:legs,
+        category:common.category||'Marché combiné'});
+    }else{
+      DB.bets.push({...common,betType:'single',odds:odds||1});
+    }
     added++;
   });
   if(!added){toast('Aucun pari à importer');return;}
@@ -2066,7 +2099,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v21 — Taxonomie ouverte';
+const APP_VER='v22 — Combines au scan + mise min par bookmaker';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
