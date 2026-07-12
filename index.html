@@ -331,13 +331,13 @@ function migrate(d){if(!d.customFields)d.customFields=[];if(!d.transactions)d.tr
   (d.bankrolls||[]).forEach(b=>{if(b.archived===undefined)b.archived=false;if(!b.oddsFormat)b.oddsFormat='decimal';
     if(!b.minStake)b.minStake=String(b.name||'').toLowerCase().includes('betify')?0.5:0.1;});
   // Harmonisation one-shot : catégories/compétitions/sports canoniques (originaux gardés dans cat0/comp0)
-  if(!d._canonV){(d.bets||[]).forEach(b=>{
+  if(!d._canonV||d._canonV<2){(d.bets||[]).forEach(b=>{
     const c=canonCat(b.category||'');if(b.category&&c!==String(b.category).trim())b.cat0=b.category;
     b.category=c;
     const k=canonComp(b.competition||'');if(b.competition&&k!==String(b.competition).trim())b.comp0=b.competition;
     b.competition=k;
     b.sport=canonSport(b.sport||'');
-  });d._canonV=1;}
+  });d._canonV=2;}
   return d;}
 function save(){DB._updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(DB));cloudQueue();updateBadge();}
 // Badge sur l'icône de l'app (PWA iOS/Android) : nombre de paris en cours
@@ -775,7 +775,7 @@ function canonCat(raw){
 function canonComp(raw){ // table interne : appelable dès migrate() au chargement (pas de TDZ)
   const M={'coupe du monde':'Coupe du Monde','coupe du monde 2026':'Coupe du Monde',
   'ligue lettonie':'Ligue Lettonie','ligapro serie a':'LigaPro (Équateur)','ligue equateur':'LigaPro (Équateur)',
-  'international friendly':'Match amical','international match':'Match amical','match amical clubs':'Match amical','match amical':'Match amical',
+  'international friendly':'Match amical','international match':'Match amical','match amical clubs':'Match amical','match amical':'Match amical','match amical international':'Match amical','amical':'Match amical',
   'ligue suede':'Ligue Suède','suede - svenska cupen':'Svenska Cupen','svenska cupen':'Svenska Cupen',
   'ligue islande':'Ligue Islande','ligue irlande':'Ligue Irlande','estonie':'Ligue Estonie','ligue estonie':'Ligue Estonie',
   'uefa europa conference league':'Conference League','uefa europa conference league qualification':'Conference League',
@@ -2142,7 +2142,7 @@ function val(id){const e=document.getElementById(id);return e?e.value:'';}
 function chk(id){const e=document.getElementById(id);return e?e.checked:false;}
 function fmtDate(d){return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}
 
-const APP_VER='v24 — Scan IA resilient';
+const APP_VER='v25 — Canon v2';
 {const ve=document.getElementById('appVer');if(ve)ve.textContent='Version '+APP_VER;}
 renderAll();
 updateBadge();
